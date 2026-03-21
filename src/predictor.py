@@ -8,6 +8,7 @@ from src.fetcher import (
     get_espn_soccer_fixtures, get_espn_team_match_history, get_espn_head_to_head,
     get_espn_team_schedule_raw, get_espn_standings,
     get_espn_nba_scoreboard, get_espn_nba_team_games,
+    get_football_data_ht_scores, match_ht_to_fixture,
 )
 from src.features.football import build_football_features
 from src.features.basketball import build_basketball_features
@@ -73,19 +74,37 @@ async def get_all_football_predictions(league_name: str = "Premier League",
                                         season: int = None,
                                         target_date: str = None) -> list:
     """Fetch today's fixtures for a league via ESPN and predict all of them."""
+    from datetime import date as _date
     league_slug = ESPN_FOOTBALL_LEAGUES.get(league_name)
     if not league_slug:
         return []
 
-    fixtures, standings = await asyncio.gather(
+    date_str = target_date or _date.today().isoformat()
+
+    fixtures, standings, fd_matches = await asyncio.gather(
         get_espn_soccer_fixtures(league_slug, target_date),
         get_espn_standings(league_slug),
+        get_football_data_ht_scores(date_str),
     )
 
     results = []
     for fixture in fixtures:
         try:
             pred = await predict_football_fixture(fixture, standings=standings)
+
+            # Enrich with HT scores from football-data.org (better source than ESPN)
+            fd = match_ht_to_fixture(fd_matches, fixture["home_team"], fixture["away_team"])
+            if fd:
+                if fd.get("home_ht") is not None:
+                    pred["home_goals_ht"] = fd["home_ht"]
+                    pred["away_goals_ht"] = fd["away_ht"]
+                # Also fill in FT score if ESPN didn't get it
+                if pred.get("home_goals") is None and fd.get("home_ft") is not None:
+                    pred["home_goals"] = fd["home_ft"]
+                    pred["away_goals"] = fd["away_ft"]
+                if not pred.get("is_final") and fd.get("status") == "FINISHED":
+                    pred["is_final"] = True
+
             results.append(pred)
         except Exception as e:
             print(f"[Football prediction error] {fixture.get('home_team')} vs "

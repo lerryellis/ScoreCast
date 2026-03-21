@@ -3,9 +3,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "")
-ADMIN_KEY        = os.getenv("ADMIN_KEY", "betscore-admin")
-PORT             = int(os.getenv("PORT", 8000))
+API_FOOTBALL_KEY    = os.getenv("API_FOOTBALL_KEY", "")
+FOOTBALL_DATA_KEY   = os.getenv("FOOTBALL_DATA_KEY", "c620ffef901d44df957dc6aa21d519f6")
+THESPORTSDB_KEY     = os.getenv("THESPORTSDB_KEY", "123")   # free public key
+ADMIN_KEY           = os.getenv("ADMIN_KEY", "betscore-admin")
+PORT                = int(os.getenv("PORT", 8000))
+
+# football-data.org competition codes for leagues we support
+FOOTBALL_DATA_COMPETITIONS = {
+    "Premier League":       "PL",
+    "Championship":         "ELC",
+    "La Liga":              "PD",
+    "Serie A":              "SA",
+    "Bundesliga":           "BL1",
+    "Ligue 1":              "FL1",
+    "Champions League":     "CL",
+    # Europa League not on free tier; Ghana PL not covered
+}
 
 # Supported leagues for football predictions (API-Football IDs — kept for reference)
 FOOTBALL_LEAGUES = {

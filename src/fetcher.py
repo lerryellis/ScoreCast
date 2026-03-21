@@ -8,7 +8,7 @@ import httpx
 import asyncio
 from datetime import date, timedelta
 from typing import Optional
-from src.config import API_FOOTBALL_KEY, FOOTBALL_LEAGUES
+from src.config import API_FOOTBALL_KEY, FOOTBALL_LEAGUES, FOOTBALL_DATA_KEY, THESPORTSDB_KEY
 
 FOOTBALL_BASE = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_FOOTBALL_KEY}
@@ -558,3 +558,151 @@ def get_nba_all_teams() -> list:
     """Return all NBA team id/name mappings."""
     from nba_api.stats.static import teams as nba_teams
     return nba_teams.get_teams()
+
+
+# ─── football-data.org  (HT scores) ──────────────────────────────────────────
+
+FOOTBALL_DATA_BASE = "https://api.football-data.org/v4"
+
+
+def _normalize_team(name: str) -> str:
+    """Normalize team name for fuzzy matching across APIs."""
+    import re
+    n = name.lower()
+    # Strip common suffixes/prefixes
+    n = re.sub(r'\b(fc|cf|sc|ac|afc|bfc|sfc|fk|sk|if|bk|ik|rsc|vfb|vfl|fsv|rb|as|ss|us|ud|cd|sd|ca|cf|rc|real|club|de|sporting|atletico)\b', '', n)
+    n = re.sub(r'[^a-z0-9 ]', ' ', n)
+    n = re.sub(r'\s+', ' ', n).strip()
+    return n
+
+
+def _teams_match(a: str, b: str) -> bool:
+    """Fuzzy match two team names from different APIs."""
+    na, nb = _normalize_team(a), _normalize_team(b)
+    if na == nb:
+        return True
+    # Check if one contains the first meaningful token of the other
+    ta = [t for t in na.split() if len(t) > 2]
+    tb = [t for t in nb.split() if len(t) > 2]
+    if not ta or not tb:
+        return False
+    # All tokens of the shorter name present in the longer
+    shorter, longer = (ta, nb) if len(ta) <= len(tb) else (tb, na)
+    return all(tok in longer for tok in shorter[:2])
+
+
+async def _fd_fetch_competition(client: httpx.AsyncClient, comp_code: str, date_str: str) -> list:
+    """Fetch one competition's matches from football-data.org for a given date."""
+    try:
+        r = await client.get(
+            f"{FOOTBALL_DATA_BASE}/competitions/{comp_code}/matches",
+            params={"dateFrom": date_str, "dateTo": date_str},
+            headers={"X-Auth-Token": FOOTBALL_DATA_KEY},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return []
+        return r.json().get("matches", [])
+    except Exception:
+        return []
+
+
+async def get_football_data_ht_scores(date_str: str) -> list:
+    """
+    Fetch half-time (and full-time) scores from football-data.org for all
+    supported competitions on a given date.
+
+    Returns a list of dicts:
+      {home_team, away_team, home_ht, away_ht, home_ft, away_ft, status, competition}
+    """
+    from src.config import FOOTBALL_DATA_COMPETITIONS
+    if not FOOTBALL_DATA_KEY:
+        return []
+    try:
+        async with httpx.AsyncClient() as client:
+            raw_lists = await asyncio.gather(
+                *[_fd_fetch_competition(client, code, date_str)
+                  for code in FOOTBALL_DATA_COMPETITIONS.values()]
+            )
+
+        results = []
+        seen = set()
+        for matches in raw_lists:
+            for m in matches:
+                key = (m["homeTeam"]["name"], m["awayTeam"]["name"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                score   = m.get("score", {})
+                ht      = score.get("halfTime", {}) or {}
+                ft      = score.get("fullTime", {}) or {}
+                home_ht = ht.get("home")
+                away_ht = ht.get("away")
+                home_ft = ft.get("home")
+                away_ft = ft.get("away")
+                status  = m.get("status", "")
+                if home_ht is None and away_ht is None and home_ft is None and away_ft is None:
+                    continue
+                results.append({
+                    "home_team":   m["homeTeam"]["name"],
+                    "away_team":   m["awayTeam"]["name"],
+                    "home_ht":     home_ht,
+                    "away_ht":     away_ht,
+                    "home_ft":     home_ft,
+                    "away_ft":     away_ft,
+                    "status":      status,
+                    "competition": m.get("competition", {}).get("name", ""),
+                })
+        return results
+    except Exception as e:
+        print(f"[football-data.org error] {e}")
+        return []
+
+
+def match_ht_to_fixture(fd_matches: list, home_team: str, away_team: str) -> Optional[dict]:
+    """Find the football-data.org match entry for an ESPN fixture by team name fuzzy match."""
+    for m in fd_matches:
+        if _teams_match(m["home_team"], home_team) and _teams_match(m["away_team"], away_team):
+            return m
+    return None
+
+
+# ─── TheSportsDB  (final scores, supplemental) ───────────────────────────────
+
+THESPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json"
+
+
+async def get_thesportsdb_day(date_str: str, sport: str = "Soccer") -> list:
+    """
+    Fetch all events on a given date from TheSportsDB (free key = 123).
+    Returns list of dicts: {home_team, away_team, home_score, away_score, league, event_id}
+    Note: HT scores are NOT available on the free tier — only final scores.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{THESPORTSDB_BASE}/{THESPORTSDB_KEY}/eventsday.php",
+                params={"d": date_str, "s": sport},
+                timeout=15,
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+
+        results = []
+        for e in (data.get("events") or []):
+            home_s = e.get("intHomeScore")
+            away_s = e.get("intAwayScore")
+            results.append({
+                "event_id":   e.get("idEvent", ""),
+                "home_team":  e.get("strHomeTeam", ""),
+                "away_team":  e.get("strAwayTeam", ""),
+                "home_score": int(home_s) if home_s is not None else None,
+                "away_score": int(away_s) if away_s is not None else None,
+                "league":     e.get("strLeague", ""),
+                "date":       e.get("dateEvent", ""),
+            })
+        return results
+    except Exception as e:
+        print(f"[TheSportsDB error] {e}")
+        return []

@@ -17,6 +17,7 @@ from src.predictor import (
 from src.fetcher import (
     get_espn_team_schedule_raw, get_espn_fixture_dates_for_month,
     get_espn_soccer_fixtures, get_espn_nba_scoreboard,
+    get_football_data_ht_scores, get_thesportsdb_day,
 )
 from src.config import ESPN_FOOTBALL_LEAGUES
 
@@ -198,6 +199,33 @@ async def live_scores():
     results = await asyncio.gather(*tasks)
     scores = [item for group in results for item in group]
     return {"scores": scores}
+
+
+@app.get("/api/football/ht-scores")
+async def football_ht_scores(date: str = Query(None)):
+    """Return HT scores from football-data.org for all matches on a given date."""
+    from datetime import date as _date
+    d = date or _date.today().isoformat()
+    try:
+        matches = await get_football_data_ht_scores(d)
+        return {"date": d, "matches": matches}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/scores/day")
+async def scores_by_day(
+    date:  str = Query(None),
+    sport: str = Query("Soccer"),
+):
+    """Return TheSportsDB event scores for a given date and sport."""
+    from datetime import date as _date
+    d = date or _date.today().isoformat()
+    try:
+        events = await get_thesportsdb_day(d, sport)
+        return {"date": d, "sport": sport, "events": events}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/health")

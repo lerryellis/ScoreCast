@@ -647,6 +647,78 @@
 
   .hidden { display: none; }
 
+  /* ── Live Score Tickers ── */
+  #tickerContainer {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+  }
+  .ticker-row {
+    height: 36px;
+    background: #080c14f0;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+  }
+  #tickerLive   { background: #0a0e18f0; }
+  #tickerFinal  { background: #080c14f0; border-top-color: #1a2a1a; }
+  .ticker-label {
+    flex-shrink: 0;
+    padding: 0 12px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border-right: 1px solid var(--border);
+    height: 100%;
+    display: flex; align-items: center;
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  .ticker-label.live  { color: var(--red); }
+  .ticker-label.final { color: var(--green); }
+  .ticker-track-wrap {
+    flex: 1;
+    overflow: hidden;
+    height: 100%;
+    position: relative;
+  }
+  .ticker-track {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    white-space: nowrap;
+    animation: ticker-scroll 40s linear infinite;
+    will-change: transform;
+  }
+  .ticker-track:hover { animation-play-state: paused; }
+  @keyframes ticker-scroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+  .ticker-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 20px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    border-right: 1px solid var(--border);
+  }
+  .ticker-item .t-sport { font-size: 13px; }
+  .ticker-item .t-score { color: var(--accent); font-weight: 800; }
+  .ticker-item .t-score.live { color: var(--red); }
+  .ticker-item .t-league { font-size: 10px; color: var(--subtext); }
+  .ticker-item .t-status { font-size: 10px; color: var(--red); font-weight: 700; animation: blink 1s step-start infinite; }
+  .ticker-item .t-ft     { font-size: 10px; color: var(--green); font-weight: 700; }
+  @keyframes blink { 50% { opacity: 0; } }
+  body { padding-bottom: 72px; }
+
   /* ── Responsive ── */
   @media (max-width: 820px) {
     .controls-calendar-row { grid-template-columns: 1fr; }
@@ -843,6 +915,7 @@
     document.querySelector(`.nav-tab.${sport}`).classList.add('active');
     document.getElementById('footballView').style.display   = sport === 'football'   ? '' : 'none';
     document.getElementById('basketballView').style.display = sport === 'basketball' ? '' : 'none';
+    refreshTickerDisplay();
     loadPredictions();
   }
 
@@ -1365,11 +1438,77 @@
     });
   }
 
+  // ── Live Score Ticker ─────────────────────────────────────────────────────
+  let _tickerScores = [];
+
+  function _fillTrack(trackEl, items, emptyMsg) {
+    if (!trackEl) return;
+    if (!items.length) {
+      trackEl.innerHTML = `<span class="ticker-item"><span class="t-league">${emptyMsg}</span></span>`;
+      trackEl.innerHTML += trackEl.innerHTML;
+      return;
+    }
+    const sportIcon = s => s === 'basketball' ? '🏀' : '⚽';
+    const html = items.map(s => `<span class="ticker-item">
+      <span class="t-sport">${sportIcon(s.sport)}</span>
+      <span class="t-league">${s.league}</span>
+      <span>${s.home_team}</span>
+      <span class="t-score${s.is_live ? ' live' : ''}">${s.home_score ?? '–'}–${s.away_score ?? '–'}</span>
+      <span>${s.away_team}</span>
+      ${s.is_live ? `<span class="t-status">● ${s.status || 'LIVE'}</span>` : `<span class="t-ft">FT</span>`}
+    </span>`).join('');
+    trackEl.innerHTML = html + html; // duplicate for seamless loop
+  }
+
+  function refreshTickerDisplay() {
+    const sport = currentSport; // 'football' or 'basketball'
+    const filtered = _tickerScores.filter(s => s.sport === sport);
+    const live  = filtered.filter(s => s.is_live);
+    const final = filtered.filter(s => s.is_final);
+    _fillTrack(document.getElementById('tickerTrackLive'),  live,  'No live games right now');
+    _fillTrack(document.getElementById('tickerTrackFinal'), final, 'No results yet today');
+  }
+
+  async function loadLiveTicker() {
+    try {
+      const res = await fetch('/api/live-scores');
+      if (!res.ok) return;
+      const data = await res.json();
+      _tickerScores = data.scores || [];
+      refreshTickerDisplay();
+    } catch (e) {
+      console.warn('Ticker error:', e);
+    }
+  }
+
   // ── Init ──────────────────────────────────────────────────────────────────
   fetchFixtureDates();  // also calls renderCalendar() when done
   loadPredictions();
   loadFlashcards();
+  loadLiveTicker();
   setInterval(loadPredictions, 30 * 60 * 1000);
+  setInterval(loadLiveTicker, 60 * 1000);
 </script>
+
+<!-- Score Tickers -->
+<div id="tickerContainer">
+  <div class="ticker-row" id="tickerLive">
+    <div class="ticker-label live">🔴 LIVE</div>
+    <div class="ticker-track-wrap">
+      <div class="ticker-track" id="tickerTrackLive">
+        <span class="ticker-item"><span class="t-league">Loading…</span></span>
+      </div>
+    </div>
+  </div>
+  <div class="ticker-row" id="tickerFinal">
+    <div class="ticker-label final">✅ FINAL</div>
+    <div class="ticker-track-wrap">
+      <div class="ticker-track" id="tickerTrackFinal">
+        <span class="ticker-item"><span class="t-league">Loading…</span></span>
+      </div>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

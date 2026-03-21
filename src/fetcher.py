@@ -87,16 +87,42 @@ async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] 
             tid = team.get("id", "")
             return f"https://a.espncdn.com/i/teamlogos/soccer/500/{tid}.png" if tid else ""
 
+        status_obj  = comp.get("status", {})
+        status_type = status_obj.get("type", {})
+        status_name = status_type.get("name", "")
+        is_final    = status_type.get("completed", False)
+        is_live     = not is_final and status_name in (
+            "STATUS_IN_PROGRESS", "STATUS_HALFTIME", "STATUS_FIRST_HALF",
+            "STATUS_SECOND_HALF", "STATUS_EXTRA_TIME", "STATUS_PENALTY",
+        )
+        display_clock = status_obj.get("displayClock") or status_type.get("shortDetail", "")
+
+        def _score(competitor):
+            s = competitor.get("score", None)
+            if s is None:
+                return None
+            if isinstance(s, dict):
+                v = s.get("value")
+                return int(v) if v is not None else None
+            try:
+                return int(s)
+            except (TypeError, ValueError):
+                return None
+
         fixtures.append({
             "fixture_id":    event["id"],
             "date":          event["date"],
-            "status":        comp.get("status", {}).get("type", {}).get("name", ""),
+            "status":        display_clock or status_name,
+            "is_live":       is_live,
+            "is_final":      is_final,
             "home_team":     home["team"]["displayName"],
             "home_team_id":  home["team"]["id"],
             "home_team_logo": _logo(home["team"]),
+            "home_goals":    _score(home) if (is_live or is_final) else None,
             "away_team":     away["team"]["displayName"],
             "away_team_id":  away["team"]["id"],
             "away_team_logo": _logo(away["team"]),
+            "away_goals":    _score(away) if (is_live or is_final) else None,
             "venue":         comp.get("venue", {}).get("fullName", ""),
             "league":        league_name,
             "league_slug":   league_slug,
@@ -387,10 +413,16 @@ async def get_espn_nba_scoreboard() -> list:
         away = next((c for c in competitors if c["homeAway"] == "away"), None)
         if not home or not away:
             continue
-        status = comp.get("status", {}).get("type", {})
+        status_obj  = comp.get("status", {})
+        status_type = status_obj.get("type", {})
+        is_final    = status_type.get("completed", False)
+        is_live     = not is_final and status_type.get("state", "") == "in"
+        display     = status_obj.get("displayClock") or status_type.get("shortDetail", "")
         games.append({
             "game_id":    event["id"],
-            "status":     comp.get("status", {}).get("displayClock", status.get("shortDetail", "")),
+            "status":     display,
+            "is_live":    is_live,
+            "is_final":   is_final,
             "home_team":  home["team"]["displayName"],
             "home_abbr":  home["team"].get("abbreviation", ""),
             "home_team_id": home["team"]["id"],

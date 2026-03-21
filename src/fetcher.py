@@ -57,11 +57,15 @@ async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] 
     return fixtures
 
 
-async def get_espn_team_schedule_raw(team_id: str, league_slug: str) -> list:
-    """Return all ESPN events for a team this season (raw event dicts)."""
+async def get_espn_team_schedule_raw(team_id: str, league_slug: str, season: int = None) -> list:
+    """Return all ESPN events for a team in a given season (raw event dicts)."""
+    params = {}
+    if season:
+        params["season"] = season
     async with httpx.AsyncClient() as client:
         r = await client.get(
             f"{ESPN_SOCCER_BASE}/{league_slug}/teams/{team_id}/schedule",
+            params=params,
             timeout=15,
         )
         r.raise_for_status()
@@ -102,38 +106,51 @@ async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 1
     return matches[:n]
 
 
-async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, last: int = 10) -> list:
-    """Find H2H results by cross-referencing both teams' schedules."""
-    home_events, away_events = await asyncio.gather(
-        get_espn_team_schedule_raw(home_id, league_slug),
-        get_espn_team_schedule_raw(away_id, league_slug),
-    )
-    away_ids = {e["id"] for e in away_events}
-    h2h = []
-    for event in home_events:
-        if event["id"] not in away_ids:
-            continue
-        comp = event["competitions"][0]
-        if not comp.get("status", {}).get("type", {}).get("completed", False):
-            continue
-        competitors = comp["competitors"]
-        home_c = next((c for c in competitors if c["id"] == str(home_id)), None)
-        away_c = next((c for c in competitors if c["id"] == str(away_id)), None)
-        if not home_c or not away_c:
-            continue
-        hs = home_c.get("score", {})
-        as_ = away_c.get("score", {})
-        hg = hs.get("value") if isinstance(hs, dict) else hs
-        ag = as_.get("value") if isinstance(as_, dict) else as_
-        if hg is None or ag is None:
-            continue
-        h2h.append({
-            "date":       event["date"],
-            "home_team":  home_c["team"]["displayName"],
-            "away_team":  away_c["team"]["displayName"],
-            "home_goals": int(hg),
-            "away_goals": int(ag),
-        })
+async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, last: int = 5) -> list:
+    """
+    Find H2H results across multiple seasons until we have `last` meetings.
+    Checks current season first, then walks back year by year (up to 4 seasons).
+    """
+    from datetime import date as _date
+    current_season = _date.today().year  # ESPN season = year the season started
+
+    h2h: list = []
+    seasons_checked = 0
+
+    for offset in range(4):  # check up to 4 seasons back
+        season = current_season - offset
+        home_events, away_events = await asyncio.gather(
+            get_espn_team_schedule_raw(home_id, league_slug, season=season),
+            get_espn_team_schedule_raw(away_id, league_slug, season=season),
+        )
+        away_ids = {e["id"] for e in away_events}
+        for event in home_events:
+            if event["id"] not in away_ids:
+                continue
+            comp = event["competitions"][0]
+            if not comp.get("status", {}).get("type", {}).get("completed", False):
+                continue
+            competitors = comp["competitors"]
+            home_c = next((c for c in competitors if c["id"] == str(home_id)), None)
+            away_c = next((c for c in competitors if c["id"] == str(away_id)), None)
+            if not home_c or not away_c:
+                continue
+            hs = home_c.get("score", {})
+            as_ = away_c.get("score", {})
+            hg = hs.get("value") if isinstance(hs, dict) else hs
+            ag = as_.get("value") if isinstance(as_, dict) else as_
+            if hg is None or ag is None:
+                continue
+            h2h.append({
+                "date":       event["date"],
+                "home_team":  home_c["team"]["displayName"],
+                "away_team":  away_c["team"]["displayName"],
+                "home_goals": int(hg),
+                "away_goals": int(ag),
+            })
+        seasons_checked += 1
+        if len(h2h) >= last:
+            break
 
     h2h.sort(key=lambda x: x["date"], reverse=True)
     return h2h[:last]

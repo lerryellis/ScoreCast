@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BetScore — AI Score Predictions</title>
+<style>
+  :root {
+    --bg:        #080c14;
+    --surface:   #0f1623;
+    --card:      #141d2e;
+    --border:    #1e2d45;
+    --accent:    #00d4ff;
+    --green:     #00e676;
+    --orange:    #ff9100;
+    --red:       #ff4444;
+    --muted:     #4a5568;
+    --text:      #e2e8f0;
+    --subtext:   #718096;
+    --football:  #00e676;
+    --basketball:#ff9100;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+  }
+
+  /* ── Nav ── */
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 32px;
+    height: 64px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(10px);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+  .logo-icon { font-size: 24px; }
+  .logo span.b { color: var(--accent); }
+  .logo span.s { color: var(--green); }
+
+  .nav-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--card);
+    border-radius: 10px;
+    padding: 4px;
+  }
+  .nav-tab {
+    padding: 8px 20px;
+    border-radius: 7px;
+    border: none;
+    background: transparent;
+    color: var(--subtext);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .nav-tab.active {
+    background: var(--border);
+    color: var(--text);
+  }
+  .nav-tab.football.active { color: var(--football); }
+  .nav-tab.basketball.active { color: var(--basketball); }
+
+  .nav-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .date-badge {
+    font-size: 13px;
+    color: var(--subtext);
+    background: var(--card);
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .refresh-btn {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    padding: 8px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .refresh-btn:hover { opacity: 0.85; }
+  .refresh-btn.loading { opacity: 0.6; pointer-events: none; }
+
+  /* ── Main Layout ── */
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+
+  /* ── Sport Header ── */
+  .sport-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .sport-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .sport-icon { font-size: 32px; }
+  .sport-title h1 { font-size: 26px; font-weight: 800; }
+  .sport-title p  { font-size: 13px; color: var(--subtext); margin-top: 2px; }
+
+  .league-select {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 14px;
+    cursor: pointer;
+    outline: none;
+  }
+
+  /* ── Match Cards Grid ── */
+  .matches-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+    gap: 20px;
+  }
+
+  /* ── Match Card ── */
+  .match-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: transform 0.2s, border-color 0.2s;
+  }
+  .match-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--subtext);
+  }
+  .card-header .league-name {
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .match-time {
+    background: var(--border);
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .card-body { padding: 22px 18px 18px; }
+
+  /* Score row */
+  .score-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .team { display: flex; flex-direction: column; }
+  .team.home { align-items: flex-start; }
+  .team.away { align-items: flex-end; }
+  .team-name {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .team-badge {
+    font-size: 11px;
+    color: var(--subtext);
+    margin-top: 2px;
+  }
+
+  .score-display {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .score-box {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    font-weight: 900;
+    border: 2px solid var(--border);
+    transition: border-color 0.3s;
+  }
+  .score-box.football  { border-color: var(--football);  color: var(--football);  background: rgba(0,230,118,0.07); }
+  .score-box.basketball{ border-color: var(--basketball);color: var(--basketball);background: rgba(255,145,0,0.07); }
+  .score-sep { font-size: 22px; color: var(--muted); font-weight: 900; }
+
+  /* Probability bar */
+  .prob-bar-wrap { margin-bottom: 16px; }
+  .prob-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--subtext);
+    margin-bottom: 5px;
+  }
+  .prob-bar {
+    height: 6px;
+    border-radius: 4px;
+    background: var(--border);
+    overflow: hidden;
+    display: flex;
+  }
+  .prob-win  { background: var(--green);  transition: width 0.8s ease; }
+  .prob-draw { background: #ffd740;       transition: width 0.8s ease; }
+  .prob-loss { background: var(--red);    transition: width 0.8s ease; }
+
+  /* Stats row */
+  .stats-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .stat-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 11px;
+    color: var(--subtext);
+  }
+  .stat-chip strong { color: var(--text); }
+
+  /* Top scorelines / range */
+  .scorelines {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .scoreline-chip {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .scoreline-chip.top {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .scoreline-label {
+    font-size: 11px;
+    color: var(--subtext);
+    margin-bottom: 6px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+
+  /* Confidence badge */
+  .confidence-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    background: rgba(0,212,255,0.1);
+    color: var(--accent);
+    border: 1px solid rgba(0,212,255,0.2);
+    float: right;
+  }
+
+  /* ── Empty / Loading / Error states ── */
+  .state-box {
+    text-align: center;
+    padding: 80px 24px;
+    color: var(--subtext);
+  }
+  .state-box .icon { font-size: 48px; margin-bottom: 16px; }
+  .state-box h3 { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+  .state-box p  { font-size: 14px; max-width: 360px; margin: 0 auto; }
+
+  .spinner {
+    width: 40px; height: 40px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Point-in feature ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .match-card { animation: fadeUp 0.35s ease both; }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    .matches-grid { grid-template-columns: 1fr; }
+    nav { padding: 0 16px; }
+    .nav-tabs .nav-tab span.label { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav>
+  <div class="logo">
+    <span class="logo-icon">🎯</span>
+    <div><span class="b">Bet</span><span class="s">Score</span></div>
+  </div>
+
+  <div class="nav-tabs">
+    <button class="nav-tab football active" onclick="switchSport('football')">
+      ⚽ <span class="label">Football</span>
+    </button>
+    <button class="nav-tab basketball" onclick="switchSport('basketball')">
+      🏀 <span class="label">Basketball</span>
+    </button>
+  </div>
+
+  <div class="nav-right">
+    <div class="date-badge" id="dateBadge"></div>
+    <button class="refresh-btn" id="refreshBtn" onclick="loadPredictions()">
+      <span id="refreshIcon">↻</span> Refresh
+    </button>
+  </div>
+</nav>
+
+<!-- Main -->
+<main>
+  <!-- Football View -->
+  <div id="footballView">
+    <div class="sport-header">
+      <div class="sport-title">
+        <span class="sport-icon">⚽</span>
+        <div>
+          <h1>Football Predictions</h1>
+          <p>Dixon-Coles Poisson model · Updated every 30 minutes</p>
+        </div>
+      </div>
+      <select class="league-select" id="leagueSelect" onchange="loadPredictions()">
+        <option>Premier League</option>
+        <option>La Liga</option>
+        <option>Serie A</option>
+        <option>Bundesliga</option>
+        <option>Ligue 1</option>
+        <option>Champions League</option>
+        <option>Ghana Premier League</option>
+      </select>
+    </div>
+    <div id="footballGrid" class="matches-grid"></div>
+  </div>
+
+  <!-- Basketball View -->
+  <div id="basketballView" style="display:none;">
+    <div class="sport-header">
+      <div class="sport-title">
+        <span class="sport-icon">🏀</span>
+        <div>
+          <h1>NBA Predictions</h1>
+          <p>XGBoost regression model · Live NBA data</p>
+        </div>
+      </div>
+    </div>
+    <div id="basketballGrid" class="matches-grid"></div>
+  </div>
+</main>
+
+<script>
+  let currentSport = 'football';
+
+  // Set today's date
+  const today = new Date();
+  document.getElementById('dateBadge').textContent =
+    today.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short', year:'numeric' });
+
+  function switchSport(sport) {
+    currentSport = sport;
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.nav-tab.${sport}`).classList.add('active');
+    document.getElementById('footballView').style.display   = sport === 'football'   ? '' : 'none';
+    document.getElementById('basketballView').style.display = sport === 'basketball' ? '' : 'none';
+    loadPredictions();
+  }
+
+  function setLoading(gridId) {
+    document.getElementById(gridId).innerHTML = `
+      <div class="state-box" style="grid-column:1/-1;">
+        <div class="spinner"></div>
+        <h3>Loading predictions…</h3>
+        <p>Fetching fixtures and computing scores</p>
+      </div>`;
+  }
+
+  function setError(gridId, msg) {
+    document.getElementById(gridId).innerHTML = `
+      <div class="state-box" style="grid-column:1/-1;">
+        <div class="icon">⚠️</div>
+        <h3>Could not load predictions</h3>
+        <p>${msg}</p>
+      </div>`;
+  }
+
+  function setEmpty(gridId, sport) {
+    document.getElementById(gridId).innerHTML = `
+      <div class="state-box" style="grid-column:1/-1;">
+        <div class="icon">${sport === 'football' ? '⚽' : '🏀'}</div>
+        <h3>No games today</h3>
+        <p>There are no scheduled ${sport} matches for today in this league.</p>
+      </div>`;
+  }
+
+  async function loadPredictions() {
+    const btn  = document.getElementById('refreshBtn');
+    const icon = document.getElementById('refreshIcon');
+    btn.classList.add('loading');
+    icon.textContent = '⟳';
+
+    if (currentSport === 'football') {
+      const league = document.getElementById('leagueSelect').value;
+      setLoading('footballGrid');
+      try {
+        const res  = await fetch(`/api/predictions/football?league=${encodeURIComponent(league)}`);
+        const data = await res.json();
+        renderFootball(data.matches || []);
+      } catch(e) {
+        setError('footballGrid', 'Make sure the API key is configured and the server is running.');
+      }
+    } else {
+      setLoading('basketballGrid');
+      try {
+        const res  = await fetch('/api/predictions/basketball');
+        const data = await res.json();
+        renderBasketball(data.matches || []);
+      } catch(e) {
+        setError('basketballGrid', 'Could not reach the NBA data source.');
+      }
+    }
+
+    btn.classList.remove('loading');
+    icon.textContent = '↻';
+  }
+
+  function formatTime(isoString) {
+    if (!isoString) return '—';
+    try {
+      const d = new Date(isoString);
+      return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    } catch { return '—'; }
+  }
+
+  function probBar(winP, drawP, lossP) {
+    return `
+      <div class="prob-bar-wrap">
+        <div class="prob-labels">
+          <span>Home ${winP}%</span>
+          ${drawP !== undefined ? `<span>Draw ${drawP}%</span>` : ''}
+          <span>Away ${lossP}%</span>
+        </div>
+        <div class="prob-bar">
+          <div class="prob-win"  style="width:${winP}%"></div>
+          ${drawP !== undefined ? `<div class="prob-draw" style="width:${drawP}%"></div>` : ''}
+          <div class="prob-loss" style="width:${lossP}%"></div>
+        </div>
+      </div>`;
+  }
+
+  function renderFootball(matches) {
+    const grid = document.getElementById('footballGrid');
+    if (!matches.length) { setEmpty('footballGrid', 'football'); return; }
+
+    grid.innerHTML = matches.map((m, i) => {
+      const p   = m.prediction;
+      const f   = m.features;
+      const top = p.top_scorelines?.[0];
+      const delay = i * 0.05;
+
+      return `
+        <div class="match-card" style="animation-delay:${delay}s">
+          <div class="card-header">
+            <span class="league-name">⚽ ${m.league}</span>
+            <span class="match-time">${formatTime(m.match_time)}</span>
+          </div>
+          <div class="card-body">
+            <div class="score-row">
+              <div class="team home">
+                <div class="team-name">${m.home_team}</div>
+                <div class="team-badge">HOME</div>
+              </div>
+              <div class="score-display">
+                <div class="score-box football">${p.predicted_home}</div>
+                <span class="score-sep">–</span>
+                <div class="score-box football">${p.predicted_away}</div>
+              </div>
+              <div class="team away">
+                <div class="team-name">${m.away_team}</div>
+                <div class="team-badge">AWAY</div>
+              </div>
+            </div>
+
+            ${probBar(p.win_probability, p.draw_probability, p.loss_probability)}
+
+            <div class="stats-row">
+              <div class="stat-chip">xG Home <strong>${p.expected_home}</strong></div>
+              <div class="stat-chip">xG Away <strong>${p.expected_away}</strong></div>
+              <div class="stat-chip">Atk <strong>${f?.home_attack ?? '—'}</strong> vs Def <strong>${f?.away_defence ?? '—'}</strong></div>
+              ${f?.h2h_matches > 0 ? `<div class="stat-chip">H2H <strong>${f.h2h_matches} games</strong></div>` : ''}
+              ${f?.home_injury_factor < 1 ? `<div class="stat-chip">🤕 Home injuries</div>` : ''}
+              ${f?.away_injury_factor < 1 ? `<div class="stat-chip">🤕 Away injuries</div>` : ''}
+            </div>
+
+            <div class="scoreline-label">MOST LIKELY SCORELINES</div>
+            <div class="scorelines">
+              ${(p.top_scorelines || []).map((s, idx) =>
+                `<div class="scoreline-chip ${idx===0?'top':''}">${s.scoreline} <span style="opacity:.6">${s.probability}%</span></div>`
+              ).join('')}
+            </div>
+
+            <div style="margin-top:12px;">
+              <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function renderBasketball(matches) {
+    const grid = document.getElementById('basketballGrid');
+    if (!matches.length) { setEmpty('basketballGrid', 'basketball'); return; }
+
+    grid.innerHTML = matches.map((m, i) => {
+      const p     = m.prediction;
+      const f     = m.features;
+      const delay = i * 0.05;
+
+      return `
+        <div class="match-card" style="animation-delay:${delay}s">
+          <div class="card-header">
+            <span class="league-name">🏀 NBA</span>
+            <span class="match-time">${m.status || 'Today'}</span>
+          </div>
+          <div class="card-body">
+            <div class="score-row">
+              <div class="team home">
+                <div class="team-name">${m.home_team}</div>
+                <div class="team-badge">${m.home_abbr || 'HOME'}</div>
+              </div>
+              <div class="score-display">
+                <div class="score-box basketball">${p.predicted_home}</div>
+                <span class="score-sep">–</span>
+                <div class="score-box basketball">${p.predicted_away}</div>
+              </div>
+              <div class="team away">
+                <div class="team-name">${m.away_team}</div>
+                <div class="team-badge">${m.away_abbr || 'AWAY'}</div>
+              </div>
+            </div>
+
+            ${probBar(p.win_probability, undefined, p.loss_probability)}
+
+            <div class="stats-row">
+              <div class="stat-chip">Home range <strong>${p.home_range}</strong></div>
+              <div class="stat-chip">Away range <strong>${p.away_range}</strong></div>
+              <div class="stat-chip">Margin <strong>${p.predicted_margin > 0 ? '+' : ''}${p.predicted_margin}</strong></div>
+              <div class="stat-chip">ORtg <strong>${f?.home_off_rating?.toFixed(2) ?? '—'}</strong></div>
+              <div class="stat-chip">DRtg <strong>${f?.home_def_rating?.toFixed(2) ?? '—'}</strong></div>
+              ${f?.h2h_matches > 0 ? `<div class="stat-chip">H2H <strong>${f.h2h_matches} games</strong></div>` : ''}
+            </div>
+
+            <div style="margin-top:4px;">
+              <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // Load on page open
+  loadPredictions();
+
+  // Auto-refresh every 30 minutes
+  setInterval(loadPredictions, 30 * 60 * 1000);
+</script>
+</body>
+</html>

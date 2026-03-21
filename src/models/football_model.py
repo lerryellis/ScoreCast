@@ -13,11 +13,12 @@ MAX_GOALS    = 8      # we model scores 0-0 to 8-8
 N_SIMULATIONS = 100_000
 
 
-def _dixon_coles_correction(home: int, away: int, lam_h: float, lam_a: float, rho: float = -0.1) -> float:
+def _dixon_coles_correction(home: int, away: int, lam_h: float, lam_a: float, rho: float = -0.04) -> float:
     """
     Dixon-Coles low-score correction factor.
     Adjusts probabilities for 0-0, 1-0, 0-1, 1-1 which Poisson over/under-estimates.
-    rho is a small negative correlation parameter (typically -0.1 to -0.15).
+    rho is a small negative correlation parameter. Kept small (-0.04) so that
+    the natural Poisson peaks drive the scoreline rather than the correction.
     """
     if home == 0 and away == 0:
         return 1 - lam_h * lam_a * rho
@@ -60,9 +61,12 @@ def predict_football_score(lambda_home: float, lambda_away: float) -> dict:
     predicted_home, predicted_away = int(idx[0]), int(idx[1])
 
     # Win / draw / loss probabilities
-    win_prob  = float(np.sum(np.tril(prob_matrix, -1).T))   # home wins (h > a)
+    # prob_matrix[h][a]: h=home goals, a=away goals
+    # h > a → lower triangle → home win
+    # h < a → upper triangle → away win
+    win_prob  = float(np.sum(np.tril(prob_matrix, -1)))   # home wins
     draw_prob = float(np.trace(prob_matrix))
-    loss_prob = float(np.sum(np.tril(prob_matrix, -1)))      # away wins
+    loss_prob = float(np.sum(np.triu(prob_matrix, 1)))    # away wins
 
     # Top 5 scorelines
     flat     = [(prob_matrix[h][a], h, a) for h in goals_range for a in goals_range]

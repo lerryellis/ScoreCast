@@ -1,5 +1,5 @@
 """
-BetScore FastAPI backend.
+ScoreCast FastAPI backend.
 Serves predictions to the frontend and runs background refresh.
 """
 
@@ -16,7 +16,7 @@ from src.predictor import (
 )
 from src.config import FOOTBALL_LEAGUES
 
-app = FastAPI(title="BetScore", version="1.0.0")
+app = FastAPI(title="ScoreCast", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,

@@ -457,22 +457,36 @@ async def get_espn_nba_scoreboard() -> list:
 
 async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
     """Fetch last N completed games for an NBA team from ESPN."""
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{ESPN_NBA_BASE}/teams/{team_id}/schedule",
-            timeout=15,
-        )
-        r.raise_for_status()
-        data = r.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{ESPN_NBA_BASE}/teams/{team_id}/schedule",
+                timeout=15,
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+    except Exception:
+        return []
 
     matches = []
+    tid = str(team_id)
     for event in data.get("events", []):
         comp = event["competitions"][0]
         if not comp.get("status", {}).get("type", {}).get("completed", False):
             continue
         competitors = comp["competitors"]
-        our = next((c for c in competitors if c["id"] == str(team_id)), None)
-        opp = next((c for c in competitors if c["id"] != str(team_id)), None)
+        # Match by competitor id OR nested team id
+        our = next(
+            (c for c in competitors
+             if c.get("id") == tid or c.get("team", {}).get("id") == tid),
+            None,
+        )
+        opp = next(
+            (c for c in competitors
+             if c.get("id") != tid and c.get("team", {}).get("id") != tid),
+            None,
+        )
         if not our or not opp:
             continue
         def _pts(c):

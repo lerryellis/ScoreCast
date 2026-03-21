@@ -173,12 +173,16 @@ async def predict_basketball_game(game: dict) -> dict:
 async def get_all_basketball_predictions() -> list:
     """Fetch today's NBA games from ESPN and predict all of them."""
     games = await get_espn_nba_scoreboard()
-    results = []
-    for game in games:
+    if not games:
+        return []
+
+    async def _safe_predict(game):
         try:
-            pred = await predict_basketball_game(game)
-            results.append(pred)
+            return await predict_basketball_game(game)
         except Exception as e:
             print(f"[Basketball prediction error] {game.get('home_team')} vs "
                   f"{game.get('away_team')}: {e}")
-    return results
+            return None
+
+    preds = await asyncio.gather(*[_safe_predict(g) for g in games])
+    return [p for p in preds if p is not None]

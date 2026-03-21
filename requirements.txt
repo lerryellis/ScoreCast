@@ -11,3 +11,4 @@ scikit-learn==1.4.2
 nba_api==1.4.1
 apscheduler==3.10.4
 aiofiles==23.2.1
+supabase>=2.3.0

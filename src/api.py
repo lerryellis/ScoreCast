@@ -228,6 +228,31 @@ async def scores_by_day(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/scorecard")
+async def scorecard():
+    """Public accuracy scorecard — aggregated prediction vs actual stats."""
+    try:
+        from src.database import get_scorecard
+        data = await get_scorecard()
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/resolve")
+async def resolve_predictions_endpoint(admin_key: str = Query(...)):
+    """Resolve yesterday's unresolved predictions against actual scores."""
+    from src.config import ADMIN_KEY
+    if admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from src.database import resolve_predictions
+        count = await resolve_predictions()
+        return {"resolved": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "date": date.today().isoformat()}

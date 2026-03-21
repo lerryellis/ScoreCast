@@ -5,6 +5,8 @@ load_dotenv()
 
 API_FOOTBALL_KEY    = os.getenv("API_FOOTBALL_KEY", "")
 FOOTBALL_DATA_KEY   = os.getenv("FOOTBALL_DATA_KEY", "c620ffef901d44df957dc6aa21d519f6")
+SUPABASE_URL        = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY        = os.getenv("SUPABASE_KEY", "")
 THESPORTSDB_KEY     = os.getenv("THESPORTSDB_KEY", "123")   # free public key
 ADMIN_KEY           = os.getenv("ADMIN_KEY", "betscore-admin")
 PORT                = int(os.getenv("PORT", 8000))

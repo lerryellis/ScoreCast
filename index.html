@@ -81,8 +81,93 @@
     gap: 6px;
   }
   .nav-tab.active { background: var(--border); color: var(--text); }
-  .nav-tab.football.active { color: var(--football); }
+  .nav-tab.football.active   { color: var(--football); }
   .nav-tab.basketball.active { color: var(--basketball); }
+  .nav-tab.accuracy.active   { color: var(--yellow); }
+
+  /* ── Accuracy View ── */
+  #accuracyView { padding: 0 0 40px; }
+  .accuracy-title-row { display:flex; align-items:center; gap:16px; padding:32px 0 24px; }
+  .accuracy-title-row .sport-icon { font-size:42px; }
+  .accuracy-title-row h1 { font-size:26px; font-weight:800; }
+  .accuracy-title-row p  { font-size:13px; color:var(--subtext); margin-top:4px; }
+
+  .scorecard-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .scorecard-stat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    text-align: center;
+  }
+  .scorecard-stat .sc-value {
+    font-size: 42px; font-weight: 900; line-height: 1;
+    margin-bottom: 8px;
+  }
+  .scorecard-stat .sc-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+    color: var(--subtext); text-transform: uppercase;
+  }
+  .scorecard-stat .sc-sub {
+    font-size: 11px; color: var(--muted); margin-top: 4px;
+  }
+  .sc-outcome { color: var(--green); }
+  .sc-exact   { color: var(--accent); }
+  .sc-error   { color: var(--orange); }
+
+  .sc-section-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+    color: var(--subtext); text-transform: uppercase;
+    margin: 24px 0 12px;
+  }
+
+  /* League table */
+  .league-table { width:100%; border-collapse:collapse; }
+  .league-table th, .league-table td {
+    padding: 10px 14px; text-align:left;
+    border-bottom: 1px solid var(--border); font-size: 13px;
+  }
+  .league-table th { color:var(--subtext); font-weight:700; font-size:11px; letter-spacing:0.4px; }
+  .league-table td:first-child { font-weight:600; }
+  .league-table .pct-good { color: var(--green); font-weight:700; }
+  .league-table .pct-mid  { color: var(--yellow); font-weight:700; }
+  .league-table .pct-low  { color: var(--red); font-weight:700; }
+
+  /* Recent log */
+  .recent-log { display:flex; flex-direction:column; gap:8px; }
+  .recent-row {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px; font-size: 12px;
+  }
+  .recent-row .rr-date  { color:var(--subtext); min-width:74px; }
+  .recent-row .rr-match { flex:1; font-weight:600; }
+  .recent-row .rr-pred  { color:var(--subtext); min-width:40px; text-align:center; }
+  .recent-row .rr-actual{ font-weight:700; min-width:40px; text-align:center; }
+  .recent-row .rr-badge {
+    font-size:10px; font-weight:800; letter-spacing:0.4px;
+    padding:2px 7px; border-radius:5px; min-width:52px; text-align:center;
+  }
+  .rr-badge.win  { background:rgba(0,230,118,.15); color:var(--green); }
+  .rr-badge.draw { background:rgba(255,215,64,.12); color:var(--yellow); }
+  .rr-badge.loss { background:rgba(255,68,68,.12);  color:var(--red); }
+  .rr-badge.exact{ background:rgba(0,212,255,.15);  color:var(--accent); }
+
+  .sc-pending {
+    text-align:center; padding:60px 24px;
+    background:var(--card); border:1px solid var(--border);
+    border-radius:16px; color:var(--subtext);
+  }
+  .sc-pending .sp-count { font-size:48px; font-weight:900; color:var(--text); }
+  .sc-pending .sp-bar-wrap { background:var(--border); border-radius:6px; height:8px; margin:16px auto; max-width:260px; }
+  .sc-pending .sp-bar { height:8px; border-radius:6px; background:var(--yellow); transition:width 0.6s; }
+
+  @media (max-width:640px) { .scorecard-grid { grid-template-columns:1fr; } }
 
   .nav-right { display: flex; align-items: center; gap: 14px; }
   .date-badge {
@@ -887,6 +972,9 @@
     <button type="button" class="nav-tab basketball" onclick="switchSport('basketball')">
       🏀 <span class="label">Basketball</span>
     </button>
+    <button type="button" class="nav-tab accuracy" onclick="switchSport('accuracy')">
+      📊 <span class="label">Accuracy</span>
+    </button>
   </div>
 
   <div class="nav-right">
@@ -947,6 +1035,18 @@
     <!-- Match grid OR team schedule -->
     <div id="footballGrid" class="matches-grid"></div>
     <div id="teamScheduleWrap" class="hidden"></div>
+  </div>
+
+  <!-- ── Accuracy View ── -->
+  <div id="accuracyView" class="hidden">
+    <div class="accuracy-title-row">
+      <span class="sport-icon">📊</span>
+      <div>
+        <h1>Prediction Accuracy</h1>
+        <p>Self-correcting scorecard · Updated daily · Football predictions only</p>
+      </div>
+    </div>
+    <div id="scorecardContent"><div class="sc-pending"><div class="sp-count">—</div><p>Loading scorecard…</p></div></div>
   </div>
 
   <!-- ── Basketball View ── -->
@@ -1080,6 +1180,11 @@
     document.querySelector(`.nav-tab.${sport}`).classList.add('active');
     document.getElementById('footballView').style.display   = sport === 'football'   ? '' : 'none';
     document.getElementById('basketballView').style.display = sport === 'basketball' ? '' : 'none';
+    document.getElementById('accuracyView').style.display   = sport === 'accuracy'   ? '' : 'none';
+    if (sport === 'accuracy') {
+      loadScorecard();
+      return;
+    }
     refreshTickerDisplay();
     loadPredictions();
   }
@@ -1814,6 +1919,110 @@
       ${scorelineSection}
       ${formH2H}
     `;
+  }
+
+  // ── Accuracy Scorecard ────────────────────────────────────────────────────
+  function pctClass(v) {
+    if (v >= 60) return 'pct-good';
+    if (v >= 40) return 'pct-mid';
+    return 'pct-low';
+  }
+
+  function formatScDate(d) {
+    if (!d) return '';
+    const dt = new Date(d + 'T12:00:00');
+    return dt.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+  }
+
+  async function loadScorecard() {
+    const el = document.getElementById('scorecardContent');
+    el.innerHTML = '<div class="sc-pending"><div class="sp-count">…</div><p>Loading scorecard…</p></div>';
+    try {
+      const res  = await fetch('/api/scorecard');
+      const data = await res.json();
+      el.innerHTML = renderScorecard(data);
+    } catch(e) {
+      el.innerHTML = '<div class="sc-pending"><p style="color:var(--red)">Could not load scorecard.</p></div>';
+    }
+  }
+
+  function renderScorecard(d) {
+    if (!d.has_data) {
+      const pct  = Math.round(((d.total || 0) / 30) * 100);
+      return `
+        <div class="sc-pending">
+          <div class="sp-count">${d.total || 0}</div>
+          <p style="font-size:15px;color:var(--text);margin-bottom:6px">predictions saved</p>
+          <p>Scorecard unlocks after <strong>30</strong> resolved games · ${d.needed ?? 30} to go</p>
+          <div class="sp-bar-wrap"><div class="sp-bar" style="width:${pct}%"></div></div>
+          <p style="margin-top:12px;font-size:12px">Predictions are saved automatically. Check back after today's games finish.</p>
+        </div>`;
+    }
+
+    // ── Big stat cards ──
+    const stats = `
+      <div class="scorecard-grid">
+        <div class="scorecard-stat">
+          <div class="sc-value sc-outcome">${d.outcome_pct}%</div>
+          <div class="sc-label">Outcome Accuracy</div>
+          <div class="sc-sub">Win / Draw / Loss correct</div>
+        </div>
+        <div class="scorecard-stat">
+          <div class="sc-value sc-exact">${d.exact_pct}%</div>
+          <div class="sc-label">Exact Score</div>
+          <div class="sc-sub">Correct scoreline predicted</div>
+        </div>
+        <div class="scorecard-stat">
+          <div class="sc-value sc-error">${d.avg_error}</div>
+          <div class="sc-label">Avg Goal Error</div>
+          <div class="sc-sub">Goals off per team per game</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--subtext);margin-bottom:24px">Based on <strong style="color:var(--text)">${d.total}</strong> resolved predictions</div>`;
+
+    // ── League table ──
+    const leagueRows = (d.leagues || []).map(l => `
+      <tr>
+        <td>${l.league}</td>
+        <td>${l.games}</td>
+        <td class="${pctClass(l.outcome_pct)}">${l.outcome_pct}%</td>
+        <td class="${pctClass(l.exact_pct)}">${l.exact_pct}%</td>
+        <td style="color:var(--orange)">${l.avg_error}</td>
+      </tr>`).join('');
+
+    const leagueTable = `
+      <div class="sc-section-title">By League</div>
+      <table class="league-table">
+        <thead><tr>
+          <th>League</th><th>Games</th>
+          <th>Outcome %</th><th>Exact %</th><th>Avg Error</th>
+        </tr></thead>
+        <tbody>${leagueRows}</tbody>
+      </table>`;
+
+    // ── Recent log ──
+    const recentRows = (d.recent || []).map(r => {
+      const correct = r.exact_correct
+        ? `<span class="rr-badge exact">EXACT ✓</span>`
+        : r.outcome_correct
+          ? `<span class="rr-badge win">OUTCOME ✓</span>`
+          : `<span class="rr-badge loss">WRONG ✗</span>`;
+      return `
+        <div class="recent-row">
+          <span class="rr-date">${formatScDate(r.date)}</span>
+          <span class="rr-match">${r.home_team} vs ${r.away_team}</span>
+          <span class="rr-pred" title="Predicted">${r.predicted}</span>
+          <span style="color:var(--muted);font-size:11px">→</span>
+          <span class="rr-actual">${r.actual}</span>
+          ${correct}
+        </div>`;
+    }).join('');
+
+    const recentLog = `
+      <div class="sc-section-title" style="margin-top:28px">Recent Predictions</div>
+      <div class="recent-log">${recentRows}</div>`;
+
+    return stats + leagueTable + recentLog;
   }
 
   // ── Live Score Ticker ─────────────────────────────────────────────────────

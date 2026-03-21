@@ -109,6 +109,15 @@ async def get_all_football_predictions(league_name: str = "Premier League",
         except Exception as e:
             print(f"[Football prediction error] {fixture.get('home_team')} vs "
                   f"{fixture.get('away_team')}: {e}")
+
+    # Save predictions to Supabase (fire-and-forget)
+    if results:
+        try:
+            from src.database import save_predictions
+            asyncio.create_task(save_predictions(results))
+        except Exception:
+            pass
+
     return results
 
 

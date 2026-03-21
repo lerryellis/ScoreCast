@@ -79,17 +79,27 @@ async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] 
         away = next((c for c in competitors if c["homeAway"] == "away"), None)
         if not home or not away:
             continue
+        def _logo(team: dict) -> str:
+            logos = team.get("logos") or []
+            if logos:
+                return logos[0].get("href", "")
+            # fallback: ESPN CDN pattern
+            tid = team.get("id", "")
+            return f"https://a.espncdn.com/i/teamlogos/soccer/500/{tid}.png" if tid else ""
+
         fixtures.append({
-            "fixture_id":   event["id"],
-            "date":         event["date"],
-            "status":       comp.get("status", {}).get("type", {}).get("name", ""),
-            "home_team":    home["team"]["displayName"],
-            "home_team_id": home["team"]["id"],
-            "away_team":    away["team"]["displayName"],
-            "away_team_id": away["team"]["id"],
-            "venue":        comp.get("venue", {}).get("fullName", ""),
-            "league":       league_name,
-            "league_slug":  league_slug,
+            "fixture_id":    event["id"],
+            "date":          event["date"],
+            "status":        comp.get("status", {}).get("type", {}).get("name", ""),
+            "home_team":     home["team"]["displayName"],
+            "home_team_id":  home["team"]["id"],
+            "home_team_logo": _logo(home["team"]),
+            "away_team":     away["team"]["displayName"],
+            "away_team_id":  away["team"]["id"],
+            "away_team_logo": _logo(away["team"]),
+            "venue":         comp.get("venue", {}).get("fullName", ""),
+            "league":        league_name,
+            "league_slug":   league_slug,
         })
     return fixtures
 
@@ -198,27 +208,53 @@ async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, la
 async def get_espn_fixture_dates_for_month(league_slug: str, year: int, month: int) -> list:
     """
     Return a list of ISO date strings (YYYY-MM-DD) that have fixtures
-    for the given league in a given month, using ESPN's date-range query.
+    for the given league in a given month.
+    Uses ESPN's calendar/whitelist endpoint which returns all event dates
+    for the current season, then filters to the requested month.
     """
-    import calendar as _cal
-    last_day = _cal.monthrange(year, month)[1]
-    start = f"{year}{month:02d}01"
-    end   = f"{year}{month:02d}{last_day:02d}"
-
     async with httpx.AsyncClient() as client:
         r = await client.get(
-            f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
-            params={"dates": f"{start}-{end}", "limit": 200},
+            f"{ESPN_SOCCER_BASE}/{league_slug}/calendar/whitelist",
             timeout=20,
         )
         r.raise_for_status()
         data = r.json()
 
+    prefix = f"{year}-{month:02d}"
     dates = set()
-    for event in data.get("events", []):
-        raw = event.get("date", "")
-        if raw:
-            dates.add(raw[:10])   # YYYY-MM-DD
+
+    # ESPN returns dates in several possible shapes
+    for entry in data.get("eventDate", {}).get("dates", []):
+        d = entry[:10] if isinstance(entry, str) else ""
+        if d.startswith(prefix):
+            dates.add(d)
+
+    # Fallback: flat list at top level
+    if not dates:
+        for entry in data.get("dates", []):
+            d = entry[:10] if isinstance(entry, str) else ""
+            if d.startswith(prefix):
+                dates.add(d)
+
+    # Second fallback: scoreboard date-range query for the month
+    if not dates:
+        import calendar as _cal
+        last_day = _cal.monthrange(year, month)[1]
+        start = f"{year}{month:02d}01"
+        end   = f"{year}{month:02d}{last_day:02d}"
+        async with httpx.AsyncClient() as client:
+            r2 = await client.get(
+                f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
+                params={"dates": f"{start}-{end}"},
+                timeout=20,
+            )
+            r2.raise_for_status()
+            data2 = r2.json()
+        for event in data2.get("events", []):
+            raw = event.get("date", "")
+            if raw:
+                dates.add(raw[:10])
+
     return sorted(dates)
 
 

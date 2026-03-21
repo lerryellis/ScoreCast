@@ -381,6 +381,20 @@
   .team { display: flex; flex-direction: column; }
   .team.home { align-items: flex-start; }
   .team.away { align-items: flex-end; }
+  .team-logo {
+    width: 36px; height: 36px;
+    object-fit: contain;
+    margin-bottom: 6px;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.4));
+  }
+  .team-logo-placeholder {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--border);
+    margin-bottom: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
   .team-name { font-size: 15px; font-weight: 700; line-height: 1.2; }
   .team-badge { font-size: 11px; color: var(--subtext); margin-top: 2px; }
 
@@ -1041,6 +1055,9 @@
           <div class="card-body">
             <div class="score-row">
               <div class="team home">
+                ${m.home_team_logo
+                  ? `<img class="team-logo" src="${m.home_team_logo}" alt="${m.home_team}" onerror="this.style.display='none'">`
+                  : `<div class="team-logo-placeholder">⚽</div>`}
                 <div class="team-name">${m.home_team}</div>
                 <div class="team-badge">HOME</div>
               </div>
@@ -1050,6 +1067,9 @@
                 <div class="score-box football">${p.predicted_away}</div>
               </div>
               <div class="team away">
+                ${m.away_team_logo
+                  ? `<img class="team-logo" src="${m.away_team_logo}" alt="${m.away_team}" onerror="this.style.display='none'">`
+                  : `<div class="team-logo-placeholder">⚽</div>`}
                 <div class="team-name">${m.away_team}</div>
                 <div class="team-badge">AWAY</div>
               </div>
@@ -1275,12 +1295,18 @@
         <div class="flashcard ${i === 0 ? 'active' : ''}" data-idx="${i}" onclick="goToFlashcard(${i})">
           <div class="flashcard-league">⚽ ${m.league}</div>
           <div class="flashcard-time">${formatTime(m.match_time)}</div>
-          <div class="flashcard-team home">${m.home_team}</div>
+          <div class="flashcard-team home">
+            ${m.home_team_logo ? `<img src="${m.home_team_logo}" style="width:32px;height:32px;object-fit:contain;margin-bottom:6px;display:block" onerror="this.style.display='none'">` : ''}
+            ${m.home_team}
+          </div>
           <div class="flashcard-score-block">
             <div class="flashcard-score">${p.predicted_home} – ${p.predicted_away}</div>
             <div class="flashcard-label">PREDICTED SCORE</div>
           </div>
-          <div class="flashcard-team away">${m.away_team}</div>
+          <div class="flashcard-team away">
+            ${m.away_team_logo ? `<img src="${m.away_team_logo}" style="width:32px;height:32px;object-fit:contain;margin-bottom:6px;display:block;margin-left:auto" onerror="this.style.display='none'">` : ''}
+            ${m.away_team}
+          </div>
         </div>`;
     }).join('');
     const dots = flashcardData.map((_, i) =>

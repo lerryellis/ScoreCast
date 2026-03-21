@@ -208,53 +208,27 @@ async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, la
 async def get_espn_fixture_dates_for_month(league_slug: str, year: int, month: int) -> list:
     """
     Return a list of ISO date strings (YYYY-MM-DD) that have fixtures
-    for the given league in a given month.
-    Uses ESPN's calendar/whitelist endpoint which returns all event dates
-    for the current season, then filters to the requested month.
+    for the given league in a given month, using ESPN's scoreboard date-range query.
     """
+    import calendar as _cal
+    last_day = _cal.monthrange(year, month)[1]
+    start = f"{year}{month:02d}01"
+    end   = f"{year}{month:02d}{last_day:02d}"
+
     async with httpx.AsyncClient() as client:
         r = await client.get(
-            f"{ESPN_SOCCER_BASE}/{league_slug}/calendar/whitelist",
+            f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
+            params={"dates": f"{start}-{end}"},
             timeout=20,
         )
         r.raise_for_status()
         data = r.json()
 
-    prefix = f"{year}-{month:02d}"
     dates = set()
-
-    # ESPN returns dates in several possible shapes
-    for entry in data.get("eventDate", {}).get("dates", []):
-        d = entry[:10] if isinstance(entry, str) else ""
-        if d.startswith(prefix):
-            dates.add(d)
-
-    # Fallback: flat list at top level
-    if not dates:
-        for entry in data.get("dates", []):
-            d = entry[:10] if isinstance(entry, str) else ""
-            if d.startswith(prefix):
-                dates.add(d)
-
-    # Second fallback: scoreboard date-range query for the month
-    if not dates:
-        import calendar as _cal
-        last_day = _cal.monthrange(year, month)[1]
-        start = f"{year}{month:02d}01"
-        end   = f"{year}{month:02d}{last_day:02d}"
-        async with httpx.AsyncClient() as client:
-            r2 = await client.get(
-                f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
-                params={"dates": f"{start}-{end}"},
-                timeout=20,
-            )
-            r2.raise_for_status()
-            data2 = r2.json()
-        for event in data2.get("events", []):
-            raw = event.get("date", "")
-            if raw:
-                dates.add(raw[:10])
-
+    for event in data.get("events", []):
+        raw = event.get("date", "")
+        if raw:
+            dates.add(raw[:10])
     return sorted(dates)
 
 

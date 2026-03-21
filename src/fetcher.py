@@ -341,10 +341,116 @@ async def get_team_injuries_football(team_id: int, fixture_id: int) -> list:
     ]
 
 
-# ─── Basketball (NBA) ─────────────────────────────────────────────────────────
+# ─── Basketball (NBA via ESPN) ────────────────────────────────────────────────
+
+ESPN_NBA_BASE = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba"
+
+# Cache ESPN team id → name mapping
+_espn_nba_teams: dict = {}
+
+
+async def _get_espn_nba_teams() -> dict:
+    """Return {team_name_lower: espn_team_id} mapping."""
+    global _espn_nba_teams
+    if _espn_nba_teams:
+        return _espn_nba_teams
+    async with httpx.AsyncClient() as client:
+        r = await client.get(f"{ESPN_NBA_BASE}/teams", params={"limit": 40}, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+    for sport in data.get("sports", []):
+        for league in sport.get("leagues", []):
+            for team in league.get("teams", []):
+                t = team.get("team", {})
+                tid  = t.get("id", "")
+                name = t.get("displayName", "")
+                nick = t.get("name", "")          # e.g. "Lakers"
+                abbr = t.get("abbreviation", "")
+                for key in [name.lower(), nick.lower(), abbr.lower()]:
+                    if key:
+                        _espn_nba_teams[key] = tid
+    return _espn_nba_teams
+
+
+async def get_espn_nba_scoreboard() -> list:
+    """Get today's NBA games from ESPN."""
+    async with httpx.AsyncClient() as client:
+        r = await client.get(f"{ESPN_NBA_BASE}/scoreboard", timeout=15)
+        r.raise_for_status()
+        data = r.json()
+
+    games = []
+    for event in data.get("events", []):
+        comp        = event["competitions"][0]
+        competitors = comp["competitors"]
+        home = next((c for c in competitors if c["homeAway"] == "home"), None)
+        away = next((c for c in competitors if c["homeAway"] == "away"), None)
+        if not home or not away:
+            continue
+        status = comp.get("status", {}).get("type", {})
+        games.append({
+            "game_id":    event["id"],
+            "status":     comp.get("status", {}).get("displayClock", status.get("shortDetail", "")),
+            "home_team":  home["team"]["displayName"],
+            "home_abbr":  home["team"].get("abbreviation", ""),
+            "home_team_id": home["team"]["id"],
+            "away_team":  away["team"]["displayName"],
+            "away_abbr":  away["team"].get("abbreviation", ""),
+            "away_team_id": away["team"]["id"],
+            "home_score": int(home.get("score", 0) or 0),
+            "away_score": int(away.get("score", 0) or 0),
+            "home_team_logo": (home["team"].get("logos") or [{}])[0].get("href", ""),
+            "away_team_logo": (away["team"].get("logos") or [{}])[0].get("href", ""),
+        })
+    return games
+
+
+async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
+    """Fetch last N completed games for an NBA team from ESPN."""
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{ESPN_NBA_BASE}/teams/{team_id}/schedule",
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+    matches = []
+    for event in data.get("events", []):
+        comp = event["competitions"][0]
+        if not comp.get("status", {}).get("type", {}).get("completed", False):
+            continue
+        competitors = comp["competitors"]
+        our = next((c for c in competitors if c["id"] == str(team_id)), None)
+        opp = next((c for c in competitors if c["id"] != str(team_id)), None)
+        if not our or not opp:
+            continue
+        def _pts(c):
+            s = c.get("score", 0)
+            return int(s.get("value", 0) if isinstance(s, dict) else (s or 0))
+
+        our_score = _pts(our)
+        opp_score = _pts(opp)
+        matches.append({
+            "game_id":  event["id"],
+            "date":     event["date"],
+            "is_home":  our["homeAway"] == "home",
+            "pts_for":  our_score,
+            "pts_ag":   opp_score,
+            "fg_pct":   0.46,   # league avg defaults — ESPN schedule doesn't include box stats
+            "fg3_pct":  0.36,
+            "ft_pct":   0.77,
+            "reb":      44,
+            "ast":      25,
+            "tov":      14,
+        })
+
+    matches.sort(key=lambda x: x["date"], reverse=True)
+    return matches[:n]
+
 
 def get_nba_today_scoreboard() -> list:
-    """Get today's NBA games."""
+    """Get today's NBA games (sync wrapper — falls back to nba_api live endpoint)."""
     try:
         from nba_api.live.nba.endpoints import scoreboard
         sb   = scoreboard.ScoreBoard()
@@ -368,30 +474,27 @@ def get_nba_today_scoreboard() -> list:
 
 
 def get_nba_team_last_n_games(team_id: int, n: int = 10) -> list:
-    """Fetch last N game logs for an NBA team."""
+    """Kept for compatibility — stats.nba.com is unreliable; use ESPN async version instead."""
     try:
         from nba_api.stats.endpoints import teamgamelogs
-        from nba_api.stats.static import teams as nba_teams
         import time
-        time.sleep(0.6)   # rate limit courtesy pause
-
+        time.sleep(0.6)
         logs = teamgamelogs.TeamGameLogs(
             team_id_nullable=str(team_id),
             last_n_games_nullable=n,
         ).get_data_frames()[0]
-
         results = []
         for _, row in logs.iterrows():
             results.append({
-                "game_id":     row["GAME_ID"],
-                "date":        row["GAME_DATE"],
-                "is_home":     "@" not in str(row.get("MATCHUP", "")),
-                "pts_for":     row["PTS"],
-                "pts_ag":      row["PTS"] - row["PLUS_MINUS"],
-                "fg_pct":      row.get("FG_PCT", 0),
-                "fg3_pct":     row.get("FG3_PCT", 0),
-                "ft_pct":      row.get("FT_PCT", 0),
-                "reb":         row.get("REB", 0),
+                "game_id":  row["GAME_ID"],
+                "date":     row["GAME_DATE"],
+                "is_home":  "@" not in str(row.get("MATCHUP", "")),
+                "pts_for":  row["PTS"],
+                "pts_ag":   row["PTS"] - row["PLUS_MINUS"],
+                "fg_pct":   row.get("FG_PCT", 0),
+                "fg3_pct":  row.get("FG3_PCT", 0),
+                "ft_pct":   row.get("FT_PCT", 0),
+                "reb":      row.get("REB", 0),
                 "ast":         row.get("AST", 0),
                 "tov":         row.get("TOV", 0),
             })

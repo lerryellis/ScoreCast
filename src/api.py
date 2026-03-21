@@ -55,7 +55,7 @@ async def football_predictions(
 @app.get("/api/predictions/basketball")
 async def basketball_predictions():
     try:
-        predictions = get_all_basketball_predictions()
+        predictions = await get_all_basketball_predictions()
         return {"sport": "basketball", "matches": predictions}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

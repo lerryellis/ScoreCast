@@ -7,7 +7,7 @@ from datetime import date
 from src.fetcher import (
     get_espn_soccer_fixtures, get_espn_team_match_history, get_espn_head_to_head,
     get_espn_team_schedule_raw, get_espn_standings,
-    get_nba_today_scoreboard, get_nba_team_last_n_games, get_nba_all_teams,
+    get_espn_nba_scoreboard, get_espn_nba_team_games,
 )
 from src.features.football import build_football_features
 from src.features.basketball import build_basketball_features
@@ -86,19 +86,31 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 
 # ─── Basketball ───────────────────────────────────────────────────────────────
 
-def predict_basketball_game(game: dict) -> dict:
-    """Full prediction pipeline for one NBA game."""
-    all_teams  = get_nba_all_teams()
-    team_map   = {t["nickname"]: t["id"] for t in all_teams}
+async def predict_basketball_game(game: dict) -> dict:
+    """Full prediction pipeline for one NBA game using ESPN data."""
+    home_id = game.get("home_team_id")
+    away_id = game.get("away_team_id")
 
-    home_id    = team_map.get(game["home_team"])
-    away_id    = team_map.get(game["away_team"])
+    async def _empty():
+        return []
 
-    home_games = get_nba_team_last_n_games(home_id) if home_id else []
-    away_games = get_nba_team_last_n_games(away_id) if away_id else []
+    home_games, away_games = await asyncio.gather(
+        get_espn_nba_team_games(home_id) if home_id else _empty(),
+        get_espn_nba_team_games(away_id) if away_id else _empty(),
+    )
 
-    # Build h2h from overlapping game ids (simplified)
+    # H2H: games both teams played (matching game IDs)
+    away_ids = {g["game_id"] for g in away_games}
     h2h = []
+    for g in home_games:
+        if g["game_id"] in away_ids:
+            h2h.append({
+                "home_team": game["home_team"],
+                "away_team": game["away_team"],
+                "home_goals": g["pts_for"],
+                "away_goals": g["pts_ag"],
+                "date": g["date"],
+            })
 
     features   = build_basketball_features(
         home_games, away_games, h2h,
@@ -107,25 +119,27 @@ def predict_basketball_game(game: dict) -> dict:
     prediction = predict_basketball_score(features)
 
     return {
-        "sport":       "basketball",
-        "game_id":     game.get("game_id", ""),
-        "home_team":   game["home_team"],
-        "home_abbr":   game.get("home_abbr", ""),
-        "away_team":   game["away_team"],
-        "away_abbr":   game.get("away_abbr", ""),
-        "status":      game.get("status", ""),
-        "prediction":  prediction,
-        "features":    features,
+        "sport":          "basketball",
+        "game_id":        game.get("game_id", ""),
+        "home_team":      game["home_team"],
+        "home_abbr":      game.get("home_abbr", ""),
+        "home_team_logo": game.get("home_team_logo", ""),
+        "away_team":      game["away_team"],
+        "away_abbr":      game.get("away_abbr", ""),
+        "away_team_logo": game.get("away_team_logo", ""),
+        "status":         game.get("status", ""),
+        "prediction":     prediction,
+        "features":       features,
     }
 
 
-def get_all_basketball_predictions() -> list:
-    """Fetch today's NBA games and predict all of them."""
-    games   = get_nba_today_scoreboard()
+async def get_all_basketball_predictions() -> list:
+    """Fetch today's NBA games from ESPN and predict all of them."""
+    games = await get_espn_nba_scoreboard()
     results = []
     for game in games:
         try:
-            pred = predict_basketball_game(game)
+            pred = await predict_basketball_game(game)
             results.append(pred)
         except Exception as e:
             print(f"[Basketball prediction error] {game.get('home_team')} vs "

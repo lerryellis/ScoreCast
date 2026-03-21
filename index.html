@@ -329,6 +329,48 @@
   .scoreline-chip.top { border-color: var(--accent); color: var(--accent); }
   .scoreline-label { font-size: 11px; color: var(--subtext); margin-bottom: 6px; font-weight: 600; letter-spacing: 0.3px; }
 
+  /* Safe bet + scorelines layout */
+  .scorelines-safe-row {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .scorelines-col { flex: 1; min-width: 180px; }
+  .safe-bet-col {
+    min-width: 160px;
+    background: rgba(0, 230, 118, 0.06);
+    border: 1px solid rgba(0, 230, 118, 0.25);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .safe-bet-label {
+    font-size: 10px;
+    color: var(--green);
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .safe-bet-line {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--green);
+    line-height: 1;
+  }
+  .safe-bet-prob {
+    font-size: 12px;
+    color: var(--subtext);
+    margin-top: 4px;
+  }
+  .safe-bet-last-h2h {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    font-size: 11px;
+    color: var(--subtext);
+  }
+  .safe-bet-last-h2h strong { color: var(--text); }
+
   /* Form + H2H section */
   .form-h2h-section {
     margin-top: 16px;
@@ -399,6 +441,8 @@
     font-size: 12px;
   }
   .h2h-row .h2h-teams { color: var(--subtext); flex: 1; padding: 0 8px; font-size: 10px; }
+  .h2h-pred { font-size: 11px; font-weight: 700; color: var(--yellow); white-space: nowrap; margin-left: 8px; }
+  .h2h-pred-label { font-size: 9px; color: var(--muted); font-weight: 400; margin-right: 3px; }
 
   /* Confidence badge */
   .confidence-badge {
@@ -694,24 +738,19 @@
     if (prevVal) sel.value = prevVal;
   }
 
-  async function onTeamChange() {
+  function onTeamChange() {
     const val = document.getElementById('teamSelect').value;
+    document.getElementById('teamScheduleWrap').style.display = 'none';
+    document.getElementById('footballGrid').style.display = '';
     if (!val) {
-      document.getElementById('teamScheduleWrap').style.display = 'none';
-      document.getElementById('footballGrid').style.display = '';
+      renderFootball(loadedMatches);
       return;
     }
-    const { name, id, slug } = JSON.parse(val);
-    document.getElementById('footballGrid').style.display = 'none';
-    document.getElementById('teamScheduleWrap').style.display = '';
-    renderTeamScheduleLoading(name);
-    try {
-      const res  = await fetch(`/api/football/team-schedule?team_id=${encodeURIComponent(id)}&league_slug=${encodeURIComponent(slug)}`);
-      const data = await res.json();
-      renderTeamSchedule(name, data.matches || []);
-    } catch(e) {
-      document.getElementById('teamScheduleWrap').innerHTML = `<div class="state-box"><div class="icon">⚠️</div><h3>Error loading schedule</h3><p>${e.message}</p></div>`;
-    }
+    const { id } = JSON.parse(val);
+    const filtered = loadedMatches.filter(m =>
+      String(m.home_team_id) === String(id) || String(m.away_team_id) === String(id)
+    );
+    renderFootball(filtered);
   }
 
   // ── Loading / Error / Empty states ────────────────────────────────────────
@@ -792,7 +831,7 @@
   function formatShortDate(isoString) {
     if (!isoString) return '—';
     try {
-      return new Date(isoString).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+      return new Date(isoString).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'2-digit' });
     } catch { return '—'; }
   }
 
@@ -826,15 +865,36 @@
     }).join('');
   }
 
-  function buildH2H(h2h, homeTeam, awayTeam) {
+  function buildH2H(h2h, homeTeam, awayTeam, prediction, features) {
     if (!h2h || !h2h.length) return '<span style="color:var(--muted);font-size:11px">No H2H data</span>';
+
+    // Poisson mode = floor(lambda), minimum 0
+    const pMode = l => Math.max(0, Math.floor(l));
+    const HOME_ADV = 1.1;
+
     return h2h.map(g => {
       const date = formatShortDate(g.date);
+      let predHtml = '';
+      if (features) {
+        let lh, la;
+        if (g.fixture_home_at_home !== false) {
+          // Current home team was home in this past match — use lambdas as-is
+          lh = features.lambda_home;
+          la = features.lambda_away;
+        } else {
+          // Teams were reversed: away team was at home
+          // Strip home advantage from lambda_home, apply it to lambda_away
+          lh = features.lambda_away * HOME_ADV;
+          la = features.lambda_home / HOME_ADV;
+        }
+        predHtml = `<span class="h2h-pred"><span class="h2h-pred-label">pred</span>${pMode(lh)}–${pMode(la)}</span>`;
+      }
       return `
         <div class="h2h-row">
           <span style="color:var(--subtext);font-size:10px">${date}</span>
           <span class="h2h-teams">${g.home_team} vs ${g.away_team}</span>
           <span class="h2h-score">${g.home_goals}–${g.away_goals}</span>
+          ${predHtml}
         </div>`;
     }).join('');
   }
@@ -881,15 +941,35 @@
               ${f?.h2h_matches > 0 ? `<div class="stat-chip">H2H <strong>${f.h2h_matches} games</strong></div>` : ''}
             </div>
 
-            <div class="scoreline-label">MOST LIKELY SCORELINES</div>
-            <div class="scorelines">
-              ${(p.top_scorelines || []).map((s, idx) =>
-                `<div class="scoreline-chip ${idx===0?'top':''}">${s.scoreline} <span style="opacity:.6">${s.probability}%</span></div>`
-              ).join('')}
-            </div>
-
-            <div style="margin-top:12px;">
-              <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+            <div class="scorelines-safe-row">
+              <div class="scorelines-col">
+                <div class="scoreline-label">MOST LIKELY SCORELINES</div>
+                <div class="scorelines">
+                  ${(p.top_scorelines || []).map((s, idx) =>
+                    `<div class="scoreline-chip ${idx===0?'top':''}">${s.scoreline} <span style="opacity:.6">${s.probability}%</span></div>`
+                  ).join('')}
+                </div>
+                <div style="margin-top:10px;">
+                  <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+                </div>
+              </div>
+              ${(() => {
+                const sb = p.safe_bet;
+                if (!sb) return '';
+                const lastH2H = m.h2h && m.h2h.length > 0 ? m.h2h[0] : null;
+                const lastH2HHtml = lastH2H ? `
+                  <div class="safe-bet-last-h2h">
+                    Last meeting<br>
+                    <strong>${lastH2H.home_team} ${lastH2H.home_goals}–${lastH2H.away_goals} ${lastH2H.away_team}</strong>
+                  </div>` : '';
+                return `
+                <div class="safe-bet-col">
+                  <div class="safe-bet-label">SAFE BET</div>
+                  <div class="safe-bet-line">Over ${sb.line}</div>
+                  <div class="safe-bet-prob">${sb.probability}% probability</div>
+                  ${lastH2HHtml}
+                </div>`;
+              })()}
             </div>
 
             <!-- Form + H2H -->
@@ -906,7 +986,7 @@
               </div>
               <div class="h2h-block">
                 <h4>Head to Head — Last 5</h4>
-                ${buildH2H(m.h2h, m.home_team, m.away_team)}
+                ${buildH2H(m.h2h, m.home_team, m.away_team, p, f)}
               </div>
             </div>
           </div>

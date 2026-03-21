@@ -80,6 +80,35 @@ def predict_football_score(lambda_home: float, lambda_away: float) -> dict:
     exp_home = float(np.sum([h * prob_matrix[h, :].sum() for h in goals_range]))
     exp_away = float(np.sum([a * prob_matrix[:, a].sum() for a in goals_range]))
 
+    # Over/Under: P(total goals > line) from the full probability matrix
+    total_goals_dist = {}  # total_goals → probability
+    for h in goals_range:
+        for a in goals_range:
+            t = h + a
+            total_goals_dist[t] = total_goals_dist.get(t, 0.0) + prob_matrix[h][a]
+
+    def _over_prob(line: float) -> float:
+        return sum(p for t, p in total_goals_dist.items() if t > line)
+
+    ou_lines = {}
+    for line in (0.5, 1.5, 2.5, 3.5):
+        ou_lines[f"over_{str(line).replace('.','_')}"] = round(_over_prob(line) * 100, 1)
+
+    # Safe bet: highest line where over probability ≥ 65%
+    safe_line = None
+    safe_prob = None
+    for line in (3.5, 2.5, 1.5, 0.5):
+        p_over = _over_prob(line)
+        if p_over >= 0.65:
+            safe_line = line
+            safe_prob = round(p_over * 100, 1)
+            break
+    # Fallback: if none hit 65%, pick under 0.5 direction with highest confidence
+    if safe_line is None:
+        under_05 = round((1 - _over_prob(0.5)) * 100, 1)
+        safe_line = "under_0.5"
+        safe_prob = under_05
+
     return {
         "predicted_home":    predicted_home,
         "predicted_away":    predicted_away,
@@ -90,4 +119,6 @@ def predict_football_score(lambda_home: float, lambda_away: float) -> dict:
         "loss_probability":  round(loss_prob * 100, 1),
         "confidence":        round(float(prob_matrix[predicted_home][predicted_away]) * 100, 1),
         "top_scorelines":    top5,
+        "over_under":        ou_lines,
+        "safe_bet":          {"line": safe_line, "type": "over", "probability": safe_prob},
     }

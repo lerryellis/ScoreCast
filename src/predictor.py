@@ -6,6 +6,7 @@ import asyncio
 from datetime import date
 from src.fetcher import (
     get_espn_soccer_fixtures, get_espn_team_match_history, get_espn_head_to_head,
+    get_espn_team_schedule_raw,
     get_nba_today_scoreboard, get_nba_team_last_n_games, get_nba_all_teams,
 )
 from src.features.football import build_football_features
@@ -36,15 +37,21 @@ async def predict_football_fixture(fixture: dict, **_) -> dict:
     prediction = predict_football_score(features["lambda_home"], features["lambda_away"])
 
     return {
-        "sport":       "football",
-        "fixture_id":  fixture["fixture_id"],
-        "home_team":   fixture["home_team"],
-        "away_team":   fixture["away_team"],
-        "league":      fixture.get("league", ""),
-        "match_time":  fixture.get("date", ""),
-        "venue":       fixture.get("venue", ""),
-        "prediction":  prediction,
-        "features":    features,
+        "sport":         "football",
+        "fixture_id":    fixture["fixture_id"],
+        "home_team":     fixture["home_team"],
+        "home_team_id":  fixture["home_team_id"],
+        "away_team":     fixture["away_team"],
+        "away_team_id":  fixture["away_team_id"],
+        "league":        fixture.get("league", ""),
+        "league_slug":   fixture.get("league_slug", ""),
+        "match_time":    fixture.get("date", ""),
+        "venue":         fixture.get("venue", ""),
+        "prediction":    prediction,
+        "features":      features,
+        "home_form":     home_matches[:5],
+        "away_form":     away_matches[:5],
+        "h2h":           h2h[:5],
     }
 
 

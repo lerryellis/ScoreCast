@@ -57,8 +57,8 @@ async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] 
     return fixtures
 
 
-async def _get_espn_team_schedule_raw(team_id: str, league_slug: str) -> list:
-    """Return all ESPN events for a team this season (raw competition dicts)."""
+async def get_espn_team_schedule_raw(team_id: str, league_slug: str) -> list:
+    """Return all ESPN events for a team this season (raw event dicts)."""
     async with httpx.AsyncClient() as client:
         r = await client.get(
             f"{ESPN_SOCCER_BASE}/{league_slug}/teams/{team_id}/schedule",
@@ -71,7 +71,7 @@ async def _get_espn_team_schedule_raw(team_id: str, league_slug: str) -> list:
 
 async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 10) -> list:
     """Fetch last N completed matches for a team from ESPN."""
-    events = await _get_espn_team_schedule_raw(team_id, league_slug)
+    events = await get_espn_team_schedule_raw(team_id, league_slug)
 
     matches = []
     for event in events:
@@ -105,8 +105,8 @@ async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 1
 async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, last: int = 10) -> list:
     """Find H2H results by cross-referencing both teams' schedules."""
     home_events, away_events = await asyncio.gather(
-        _get_espn_team_schedule_raw(home_id, league_slug),
-        _get_espn_team_schedule_raw(away_id, league_slug),
+        get_espn_team_schedule_raw(home_id, league_slug),
+        get_espn_team_schedule_raw(away_id, league_slug),
     )
     away_ids = {e["id"] for e in away_events}
     h2h = []

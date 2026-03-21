@@ -21,11 +21,13 @@ FOOTBALL_LEAGUES = {
 # ESPN league slugs — used as primary data source (free, no key, current season)
 ESPN_FOOTBALL_LEAGUES = {
     "Premier League":       "eng.1",
+    "Championship":         "eng.2",
     "La Liga":              "esp.1",
     "Serie A":              "ita.1",
     "Bundesliga":           "ger.1",
     "Ligue 1":              "fra.1",
     "Champions League":     "UEFA.CHAMPIONS",
+    "Europa League":        "UEFA.EUROPA",
     "Ghana Premier League": "gha.1",
 }
 

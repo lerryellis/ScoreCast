@@ -221,6 +221,19 @@
   .cal-day.selected { background: var(--accent) !important; color: #000 !important; font-weight: 700; }
   .cal-day.empty { cursor: default; }
   .cal-day.other-month { color: var(--muted); }
+  .cal-day.has-games { position: relative; }
+  .cal-day.has-games::after {
+    content: '';
+    position: absolute;
+    bottom: 3px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--football);
+  }
+  .cal-day.selected.has-games::after { background: #000; }
   .cal-selected-label {
     margin-top: 14px;
     text-align: center;
@@ -636,6 +649,7 @@
   let selectedDate   = new Date();
   let calendarDate   = new Date();
   let loadedMatches  = [];   // cache for team dropdown population
+  let fixtureDates   = new Set();  // ISO dates with games for selected league+month
 
   // ── Date badge ────────────────────────────────────────────────────────────
   document.getElementById('dateBadge').textContent =
@@ -677,6 +691,7 @@
       let cls = '';
       if (dt.getTime() === sel.getTime()) cls = 'selected';
       else if (dt.getTime() === today.getTime()) cls = 'today';
+      if (fixtureDates.has(isoStr)) cls += ' has-games';
       html += `<div class="cal-day ${cls}" onclick="onDateClick('${isoStr}')">${d}</div>`;
     }
     html += `</div>`;
@@ -687,8 +702,21 @@
     document.getElementById('calendarPanel').innerHTML = html;
   }
 
-  function calPrev() { calendarDate.setMonth(calendarDate.getMonth()-1); renderCalendar(); }
-  function calNext() { calendarDate.setMonth(calendarDate.getMonth()+1); renderCalendar(); }
+  async function fetchFixtureDates() {
+    if (currentSport !== 'football') return;
+    const league = document.getElementById('leagueSelect').value;
+    const year   = calendarDate.getFullYear();
+    const month  = calendarDate.getMonth() + 1;
+    try {
+      const res  = await fetch(`/api/football/fixture-dates?league=${encodeURIComponent(league)}&year=${year}&month=${month}`);
+      const data = await res.json();
+      fixtureDates = new Set(data.dates || []);
+    } catch { fixtureDates = new Set(); }
+    renderCalendar();
+  }
+
+  function calPrev() { calendarDate.setMonth(calendarDate.getMonth()-1); fetchFixtureDates(); }
+  function calNext() { calendarDate.setMonth(calendarDate.getMonth()+1); fetchFixtureDates(); }
 
   function onDateClick(iso) {
     selectedDate = new Date(iso + 'T12:00:00');
@@ -716,6 +744,7 @@
     sel.innerHTML = '<option value="">All Teams</option>';
     document.getElementById('teamScheduleWrap').style.display = 'none';
     document.getElementById('footballGrid').style.display = '';
+    fetchFixtureDates();
     loadPredictions();
   }
 
@@ -1116,7 +1145,7 @@
   }
 
   // ── Init ──────────────────────────────────────────────────────────────────
-  renderCalendar();
+  fetchFixtureDates();  // also calls renderCalendar() when done
   loadPredictions();
   setInterval(loadPredictions, 30 * 60 * 1000);
 </script>

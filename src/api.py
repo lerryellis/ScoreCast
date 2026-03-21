@@ -14,7 +14,7 @@ from src.predictor import (
     get_all_basketball_predictions,
     predict_football_fixture,
 )
-from src.fetcher import get_espn_team_schedule_raw
+from src.fetcher import get_espn_team_schedule_raw, get_espn_fixture_dates_for_month
 from src.config import ESPN_FOOTBALL_LEAGUES
 
 app = FastAPI(title="ScoreCast", version="1.0.0")
@@ -112,6 +112,27 @@ async def team_schedule(
             results.append(entry)
 
         return {"team_id": team_id, "league_slug": league_slug, "matches": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/football/fixture-dates")
+async def fixture_dates(
+    league: str = Query("Premier League"),
+    year:   int = Query(None),
+    month:  int = Query(None),
+):
+    """Return list of dates that have fixtures for a league in a given month."""
+    from datetime import date as _date
+    today = _date.today()
+    y = year  or today.year
+    m = month or today.month
+    league_slug = ESPN_FOOTBALL_LEAGUES.get(league)
+    if not league_slug:
+        return {"dates": []}
+    try:
+        dates = await get_espn_fixture_dates_for_month(league_slug, y, m)
+        return {"league": league, "year": y, "month": m, "dates": dates}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -195,6 +195,33 @@ async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, la
     return h2h[:last]
 
 
+async def get_espn_fixture_dates_for_month(league_slug: str, year: int, month: int) -> list:
+    """
+    Return a list of ISO date strings (YYYY-MM-DD) that have fixtures
+    for the given league in a given month, using ESPN's date-range query.
+    """
+    import calendar as _cal
+    last_day = _cal.monthrange(year, month)[1]
+    start = f"{year}{month:02d}01"
+    end   = f"{year}{month:02d}{last_day:02d}"
+
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
+            params={"dates": f"{start}-{end}", "limit": 200},
+            timeout=20,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+    dates = set()
+    for event in data.get("events", []):
+        raw = event.get("date", "")
+        if raw:
+            dates.add(raw[:10])   # YYYY-MM-DD
+    return sorted(dates)
+
+
 # ─── Football (API-Football — legacy/fallback) ────────────────────────────────
 
 async def get_football_fixtures(league_id: int, season: int, target_date: Optional[str] = None) -> list:

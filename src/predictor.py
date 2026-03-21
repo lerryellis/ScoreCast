@@ -6,7 +6,7 @@ import asyncio
 from datetime import date
 from src.fetcher import (
     get_espn_soccer_fixtures, get_espn_team_match_history, get_espn_head_to_head,
-    get_espn_team_schedule_raw,
+    get_espn_team_schedule_raw, get_espn_standings,
     get_nba_today_scoreboard, get_nba_team_last_n_games, get_nba_all_teams,
 )
 from src.features.football import build_football_features
@@ -18,7 +18,7 @@ from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES
 
 # ─── Football ─────────────────────────────────────────────────────────────────
 
-async def predict_football_fixture(fixture: dict, **_) -> dict:
+async def predict_football_fixture(fixture: dict, standings: dict = None, **_) -> dict:
     """Full prediction pipeline for one football fixture."""
     home_id     = fixture["home_team_id"]
     away_id     = fixture["away_team_id"]
@@ -30,9 +30,14 @@ async def predict_football_fixture(fixture: dict, **_) -> dict:
         get_espn_head_to_head(home_id, away_id, league_slug),
     )
 
+    standings = standings or {}
+    home_rank  = standings.get(str(home_id), {}).get("rank", 0)
+    away_rank  = standings.get(str(away_id), {}).get("rank", 0)
+
     features = build_football_features(
         home_matches, away_matches, h2h,
         fixture["home_team"], fixture["away_team"],
+        home_rank=home_rank, away_rank=away_rank,
     )
     prediction = predict_football_score(features["lambda_home"], features["lambda_away"])
 
@@ -63,12 +68,15 @@ async def get_all_football_predictions(league_name: str = "Premier League",
     if not league_slug:
         return []
 
-    fixtures = await get_espn_soccer_fixtures(league_slug, target_date)
+    fixtures, standings = await asyncio.gather(
+        get_espn_soccer_fixtures(league_slug, target_date),
+        get_espn_standings(league_slug),
+    )
 
     results = []
     for fixture in fixtures:
         try:
-            pred = await predict_football_fixture(fixture)
+            pred = await predict_football_fixture(fixture, standings=standings)
             results.append(pred)
         except Exception as e:
             print(f"[Football prediction error] {fixture.get('home_team')} vs "

@@ -13,10 +13,47 @@ from src.config import API_FOOTBALL_KEY, FOOTBALL_LEAGUES
 FOOTBALL_BASE = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_FOOTBALL_KEY}
 
-ESPN_SOCCER_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+ESPN_SOCCER_BASE   = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+ESPN_STANDINGS_BASE = "https://site.api.espn.com/apis/v2/sports/soccer"
 
 
 # ─── Football (ESPN) ──────────────────────────────────────────────────────────
+
+async def get_espn_standings(league_slug: str) -> dict:
+    """
+    Fetch current league standings from ESPN.
+    Returns dict keyed by team_id → {rank, points, wins, draws, losses, games_played,
+                                      goals_for, goals_against, goal_diff}
+    """
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{ESPN_STANDINGS_BASE}/{league_slug}/standings",
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+    standings = {}
+    try:
+        entries = data["children"][0]["standings"]["entries"]
+        for entry in entries:
+            stats = {s["name"]: s.get("value", 0) for s in entry.get("stats", [])}
+            team  = entry.get("team", {})
+            team_id = str(team.get("id", "")) if isinstance(team, dict) else ""
+            if not team_id:
+                continue
+            standings[team_id] = {
+                "rank":         int(stats.get("rank", 99)),
+                "points":       int(stats.get("points", 0)),
+                "wins":         int(stats.get("wins", 0)),
+                "draws":        int(stats.get("ties", 0)),
+                "losses":       int(stats.get("losses", 0)),
+                "games_played": int(stats.get("gamesPlayed", 0)),
+            }
+    except (KeyError, IndexError, TypeError):
+        pass
+    return standings
+
 
 async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] = None) -> list:
     """Fetch today's soccer fixtures from ESPN for a given league."""
@@ -142,11 +179,13 @@ async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, la
             if hg is None or ag is None:
                 continue
             h2h.append({
-                "date":       event["date"],
-                "home_team":  home_c["team"]["displayName"],
-                "away_team":  away_c["team"]["displayName"],
-                "home_goals": int(hg),
-                "away_goals": int(ag),
+                "date":            event["date"],
+                "home_team":       home_c["team"]["displayName"],
+                "away_team":       away_c["team"]["displayName"],
+                "home_goals":      int(hg),
+                "away_goals":      int(ag),
+                # Was the fixture's home team actually playing at home that day?
+                "fixture_home_at_home": home_c.get("homeAway") == "home",
             })
         seasons_checked += 1
         if len(h2h) >= last:

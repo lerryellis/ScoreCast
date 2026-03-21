@@ -25,8 +25,8 @@ async def predict_football_fixture(fixture: dict, **_) -> dict:
     league_slug = fixture.get("league_slug", "eng.1")
 
     home_matches, away_matches, h2h = await asyncio.gather(
-        get_espn_team_match_history(home_id, league_slug),
-        get_espn_team_match_history(away_id, league_slug),
+        get_espn_team_match_history(home_id, league_slug, n=38),
+        get_espn_team_match_history(away_id, league_slug, n=38),
         get_espn_head_to_head(home_id, away_id, league_slug),
     )
 

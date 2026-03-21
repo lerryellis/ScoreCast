@@ -34,16 +34,30 @@ def build_football_features(
     home_injuries = home_injuries or []
     away_injuries = away_injuries or []
 
-    # ── Goals scored / conceded rolling averages ──────────────────────────
-    home_scored   = [m["goals_for"] for m in home_matches if m["goals_for"] is not None]
-    home_conceded = [m["goals_ag"]  for m in home_matches if m["goals_ag"]  is not None]
-    away_scored   = [m["goals_for"] for m in away_matches if m["goals_for"] is not None]
-    away_conceded = [m["goals_ag"]  for m in away_matches if m["goals_ag"]  is not None]
+    # ── Split matches by venue for venue-specific ratings ─────────────────
+    # Home team's home games → attack/defence at home
+    # Away team's away games → attack/defence when travelling
+    # Fall back to all games if fewer than 3 venue-specific games
+    MIN_VENUE_GAMES = 3
 
-    home_avg_scored   = rolling_average(home_scored,   FOOTBALL_FORM_WINDOW) or LEAGUE_AVG_GOALS
-    home_avg_conceded = rolling_average(home_conceded, FOOTBALL_FORM_WINDOW) or LEAGUE_AVG_GOALS
-    away_avg_scored   = rolling_average(away_scored,   FOOTBALL_FORM_WINDOW) or LEAGUE_AVG_GOALS
-    away_avg_conceded = rolling_average(away_conceded, FOOTBALL_FORM_WINDOW) or LEAGUE_AVG_GOALS
+    home_at_home = [m for m in home_matches if m.get("is_home")]
+    away_at_away = [m for m in away_matches if not m.get("is_home")]
+
+    _h_scored_src   = home_at_home if len(home_at_home) >= MIN_VENUE_GAMES else home_matches
+    _h_conceded_src = home_at_home if len(home_at_home) >= MIN_VENUE_GAMES else home_matches
+    _a_scored_src   = away_at_away if len(away_at_away) >= MIN_VENUE_GAMES else away_matches
+    _a_conceded_src = away_at_away if len(away_at_away) >= MIN_VENUE_GAMES else away_matches
+
+    # Matches are sorted most-recent-first — take first FORM_WINDOW to get recent games
+    home_scored   = [m["goals_for"] for m in _h_scored_src[:FOOTBALL_FORM_WINDOW]   if m["goals_for"] is not None]
+    home_conceded = [m["goals_ag"]  for m in _h_conceded_src[:FOOTBALL_FORM_WINDOW]  if m["goals_ag"]  is not None]
+    away_scored   = [m["goals_for"] for m in _a_scored_src[:FOOTBALL_FORM_WINDOW]    if m["goals_for"] is not None]
+    away_conceded = [m["goals_ag"]  for m in _a_conceded_src[:FOOTBALL_FORM_WINDOW]  if m["goals_ag"]  is not None]
+
+    home_avg_scored   = float(np.mean(home_scored))   if home_scored   else LEAGUE_AVG_GOALS
+    home_avg_conceded = float(np.mean(home_conceded)) if home_conceded else LEAGUE_AVG_GOALS
+    away_avg_scored   = float(np.mean(away_scored))   if away_scored   else LEAGUE_AVG_GOALS
+    away_avg_conceded = float(np.mean(away_conceded)) if away_conceded else LEAGUE_AVG_GOALS
 
     # ── Strength ratings ──────────────────────────────────────────────────
     home_attack   = home_avg_scored   / LEAGUE_AVG_GOALS

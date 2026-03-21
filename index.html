@@ -963,6 +963,31 @@
 
 </main>
 
+<!-- Match Detail Modal -->
+<div id="matchModal" role="dialog" aria-modal="true">
+  <div class="modal-panel" id="modalPanel"></div>
+</div>
+
+<!-- Score Tickers -->
+<div id="tickerContainer">
+  <div class="ticker-row" id="tickerLive">
+    <div class="ticker-label live">🔴 LIVE</div>
+    <div class="ticker-track-wrap">
+      <div class="ticker-track" id="tickerTrackLive">
+        <span class="ticker-item"><span class="t-league">Loading…</span></span>
+      </div>
+    </div>
+  </div>
+  <div class="ticker-row" id="tickerFinal">
+    <div class="ticker-label final">✅ FINAL</div>
+    <div class="ticker-track-wrap">
+      <div class="ticker-track" id="tickerTrackFinal">
+        <span class="ticker-item"><span class="t-league">Loading…</span></span>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
   // ── State ─────────────────────────────────────────────────────────────────
   let currentSport   = 'football';
@@ -1843,30 +1868,6 @@
   setInterval(loadLiveTicker, 60 * 1000);
 </script>
 
-<!-- Match Detail Modal -->
-<div id="matchModal" role="dialog" aria-modal="true">
-  <div class="modal-panel" id="modalPanel"></div>
-</div>
-
-<!-- Score Tickers -->
-<div id="tickerContainer">
-  <div class="ticker-row" id="tickerLive">
-    <div class="ticker-label live">🔴 LIVE</div>
-    <div class="ticker-track-wrap">
-      <div class="ticker-track" id="tickerTrackLive">
-        <span class="ticker-item"><span class="t-league">Loading…</span></span>
-      </div>
-    </div>
-  </div>
-  <div class="ticker-row" id="tickerFinal">
-    <div class="ticker-label final">✅ FINAL</div>
-    <div class="ticker-track-wrap">
-      <div class="ticker-track" id="tickerTrackFinal">
-        <span class="ticker-item"><span class="t-league">Loading…</span></span>
-      </div>
-    </div>
-  </div>
-</div>
 
 </body>
 </html>

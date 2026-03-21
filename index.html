@@ -124,6 +124,95 @@
   .sport-title-row h1 { font-size: 26px; font-weight: 800; }
   .sport-title-row p  { font-size: 13px; color: var(--subtext); margin-top: 2px; }
 
+  /* ── Flashcard carousel ── */
+  .flashcard-wrap {
+    position: relative;
+    width: 100%;
+    height: 140px;
+    margin-bottom: 24px;
+    border-radius: 16px;
+    overflow: hidden;
+    cursor: pointer;
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+  .flashcard {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 32px;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    background: linear-gradient(135deg, #0d1b2e 0%, #0f2744 60%, #0d1b2e 100%);
+  }
+  .flashcard.active { opacity: 1; }
+  .flashcard-league {
+    position: absolute;
+    top: 14px; left: 32px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .flashcard-time {
+    position: absolute;
+    top: 14px; right: 32px;
+    font-size: 11px;
+    color: var(--subtext);
+  }
+  .flashcard-team {
+    flex: 1;
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1.2;
+  }
+  .flashcard-team.home { text-align: left; }
+  .flashcard-team.away { text-align: right; }
+  .flashcard-score-block {
+    flex: 0 0 auto;
+    text-align: center;
+    padding: 0 24px;
+  }
+  .flashcard-score {
+    font-size: 36px;
+    font-weight: 900;
+    color: var(--football);
+    letter-spacing: 2px;
+  }
+  .flashcard-label {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+  }
+  .flashcard-dots {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 5px;
+  }
+  .flashcard-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: background 0.3s;
+  }
+  .flashcard-dot.active { background: var(--accent); }
+  .flashcard-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
   /* ── Controls + Calendar row ── */
   .controls-calendar-row {
     display: grid;
@@ -593,6 +682,11 @@
         <h1>Football Predictions</h1>
         <p>Dixon-Coles Poisson model · ESPN live data · Updated every 30 minutes</p>
       </div>
+    </div>
+
+    <!-- Flashcard carousel -->
+    <div class="flashcard-wrap" id="flashcardWrap">
+      <div class="flashcard-empty">Loading upcoming matches…</div>
     </div>
 
     <!-- Controls + Calendar -->
@@ -1144,9 +1238,111 @@
     }).join('');
   }
 
+  // ── Flashcard Carousel ────────────────────────────────────────────────────
+  let flashcardData    = [];
+  let flashcardIndex   = 0;
+  let flashcardTimer   = null;
+
+  const ALL_LEAGUES = [
+    'Premier League','Championship','La Liga','Serie A',
+    'Bundesliga','Ligue 1','Champions League','Europa League'
+  ];
+
+  async function loadFlashcards() {
+    const today = formatISO(new Date());
+    const results = await Promise.allSettled(
+      ALL_LEAGUES.map(lg =>
+        fetch(`/api/predictions/football?league=${encodeURIComponent(lg)}&date=${today}`)
+          .then(r => r.json()).then(d => d.matches || [])
+      )
+    );
+    const all = results.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+    // Shuffle
+    flashcardData = all.sort(() => Math.random() - 0.5);
+    flashcardIndex = 0;
+    renderFlashcards();
+  }
+
+  function renderFlashcards() {
+    const wrap = document.getElementById('flashcardWrap');
+    if (!flashcardData.length) {
+      wrap.innerHTML = '<div class="flashcard-empty">No upcoming matches found across leagues</div>';
+      return;
+    }
+    const cards = flashcardData.map((m, i) => {
+      const p = m.prediction;
+      return `
+        <div class="flashcard ${i === 0 ? 'active' : ''}" data-idx="${i}" onclick="goToFlashcard(${i})">
+          <div class="flashcard-league">⚽ ${m.league}</div>
+          <div class="flashcard-time">${formatTime(m.match_time)}</div>
+          <div class="flashcard-team home">${m.home_team}</div>
+          <div class="flashcard-score-block">
+            <div class="flashcard-score">${p.predicted_home} – ${p.predicted_away}</div>
+            <div class="flashcard-label">PREDICTED SCORE</div>
+          </div>
+          <div class="flashcard-team away">${m.away_team}</div>
+        </div>`;
+    }).join('');
+    const dots = flashcardData.map((_, i) =>
+      `<div class="flashcard-dot ${i === 0 ? 'active' : ''}" id="fdot-${i}"></div>`
+    ).join('');
+    wrap.innerHTML = cards + `<div class="flashcard-dots">${dots}</div>`;
+
+    if (flashcardTimer) clearInterval(flashcardTimer);
+    flashcardTimer = setInterval(advanceFlashcard, 4000);
+  }
+
+  function advanceFlashcard() {
+    if (!flashcardData.length) return;
+    const next = (flashcardIndex + 1) % flashcardData.length;
+    showFlashcard(next);
+  }
+
+  function showFlashcard(idx) {
+    document.querySelectorAll('.flashcard').forEach((el, i) => {
+      el.classList.toggle('active', i === idx);
+    });
+    document.querySelectorAll('.flashcard-dot').forEach((el, i) => {
+      el.classList.toggle('active', i === idx);
+    });
+    flashcardIndex = idx;
+  }
+
+  function goToFlashcard(idx) {
+    const m = flashcardData[idx];
+    if (!m) return;
+    // Switch to correct league and date, then scroll to match
+    const leagueSelect = document.getElementById('leagueSelect');
+    leagueSelect.value = m.league.replace('English ', '').replace('German ', '');
+    // Try to match league name to dropdown option
+    for (const opt of leagueSelect.options) {
+      if (m.league.includes(opt.value) || opt.value.includes(m.league.split(' ')[1] || '')) {
+        leagueSelect.value = opt.value; break;
+      }
+    }
+    selectedDate = new Date(m.match_time || new Date());
+    selectedDate.setHours(12, 0, 0, 0);
+    renderCalendar();
+    loadPredictions().then(() => {
+      // Scroll to the matching card after render
+      setTimeout(() => {
+        const cards = document.querySelectorAll('.match-card');
+        for (const card of cards) {
+          if (card.textContent.includes(m.home_team) && card.textContent.includes(m.away_team)) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.style.outline = '2px solid var(--accent)';
+            setTimeout(() => card.style.outline = '', 2000);
+            break;
+          }
+        }
+      }, 500);
+    });
+  }
+
   // ── Init ──────────────────────────────────────────────────────────────────
   fetchFixtureDates();  // also calls renderCalendar() when done
   loadPredictions();
+  loadFlashcards();
   setInterval(loadPredictions, 30 * 60 * 1000);
 </script>
 </body>

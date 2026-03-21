@@ -5,44 +5,39 @@ Orchestrator — given a fixture, pulls all data, builds features, runs model.
 import asyncio
 from datetime import date
 from src.fetcher import (
-    get_football_fixtures, get_team_last_n_matches,
-    get_head_to_head_football, get_team_injuries_football,
+    get_espn_soccer_fixtures, get_espn_team_match_history, get_espn_head_to_head,
     get_nba_today_scoreboard, get_nba_team_last_n_games, get_nba_all_teams,
 )
 from src.features.football import build_football_features
 from src.features.basketball import build_basketball_features
 from src.models.football_model import predict_football_score
 from src.models.basketball_model import predict_basketball_score
-from src.config import FOOTBALL_LEAGUES
+from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES
 
 
 # ─── Football ─────────────────────────────────────────────────────────────────
 
-async def predict_football_fixture(fixture: dict, season: int = 2024) -> dict:
+async def predict_football_fixture(fixture: dict, **_) -> dict:
     """Full prediction pipeline for one football fixture."""
-    home_id   = fixture["home_team_id"]
-    away_id   = fixture["away_team_id"]
-    fix_id    = fixture["fixture_id"]
+    home_id     = fixture["home_team_id"]
+    away_id     = fixture["away_team_id"]
+    league_slug = fixture.get("league_slug", "eng.1")
 
-    # Fetch in parallel
-    home_matches, away_matches, h2h, home_inj, away_inj = await asyncio.gather(
-        get_team_last_n_matches(home_id, season),
-        get_team_last_n_matches(away_id, season),
-        get_head_to_head_football(home_id, away_id),
-        get_team_injuries_football(home_id, fix_id),
-        get_team_injuries_football(away_id, fix_id),
+    home_matches, away_matches, h2h = await asyncio.gather(
+        get_espn_team_match_history(home_id, league_slug),
+        get_espn_team_match_history(away_id, league_slug),
+        get_espn_head_to_head(home_id, away_id, league_slug),
     )
 
     features = build_football_features(
         home_matches, away_matches, h2h,
         fixture["home_team"], fixture["away_team"],
-        home_inj, away_inj,
     )
     prediction = predict_football_score(features["lambda_home"], features["lambda_away"])
 
     return {
         "sport":       "football",
-        "fixture_id":  fix_id,
+        "fixture_id":  fixture["fixture_id"],
         "home_team":   fixture["home_team"],
         "away_team":   fixture["away_team"],
         "league":      fixture.get("league", ""),
@@ -54,19 +49,19 @@ async def predict_football_fixture(fixture: dict, season: int = 2024) -> dict:
 
 
 async def get_all_football_predictions(league_name: str = "Premier League",
-                                        season: int = 2024,
+                                        season: int = None,
                                         target_date: str = None) -> list:
-    """Fetch today's fixtures for a league and predict all of them."""
-    if league_name not in FOOTBALL_LEAGUES:
+    """Fetch today's fixtures for a league via ESPN and predict all of them."""
+    league_slug = ESPN_FOOTBALL_LEAGUES.get(league_name)
+    if not league_slug:
         return []
 
-    league_id = FOOTBALL_LEAGUES[league_name]["id"]
-    fixtures  = await get_football_fixtures(league_id, season, target_date)
+    fixtures = await get_espn_soccer_fixtures(league_slug, target_date)
 
     results = []
     for fixture in fixtures:
         try:
-            pred = await predict_football_fixture(fixture, season)
+            pred = await predict_football_fixture(fixture)
             results.append(pred)
         except Exception as e:
             print(f"[Football prediction error] {fixture.get('home_team')} vs "

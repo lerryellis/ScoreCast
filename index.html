@@ -719,6 +719,146 @@
   @keyframes blink { 50% { opacity: 0; } }
   body { padding-bottom: 72px; }
 
+  /* ── Match Detail Modal ── */
+  #matchModal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    background: rgba(0,0,0,0.82);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    overflow-y: auto;
+    padding: 24px 16px 80px;
+  }
+  #matchModal.open { display: flex; justify-content: center; align-items: flex-start; }
+  .modal-panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    width: 100%;
+    max-width: 820px;
+    padding: 32px;
+    position: relative;
+    animation: fadeUp 0.25s ease;
+  }
+  .modal-close {
+    position: absolute;
+    top: 16px; right: 20px;
+    background: none;
+    border: none;
+    color: var(--subtext);
+    font-size: 22px;
+    cursor: pointer;
+    line-height: 1;
+    transition: color 0.2s;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-league-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    font-size: 13px;
+    color: var(--subtext);
+  }
+  .modal-venue { font-size: 11px; color: var(--muted); }
+  .modal-teams-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .modal-team {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+  }
+  .modal-team img { width: 64px; height: 64px; object-fit: contain; }
+  .modal-team-name { font-size: 18px; font-weight: 700; text-align: center; }
+  .modal-team-badge { font-size: 10px; color: var(--subtext); font-weight: 600; letter-spacing: 0.5px; }
+  .modal-score-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .modal-score-boxes {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .modal-score-box {
+    width: 72px; height: 72px;
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 36px; font-weight: 900;
+  }
+  .modal-score-box.football   { border: 2px solid var(--football);   color: var(--football);   background: rgba(0,230,118,0.07); }
+  .modal-score-box.basketball { border: 2px solid var(--basketball); color: var(--basketball); background: rgba(255,145,0,0.07); }
+  .modal-score-sep { font-size: 26px; color: var(--muted); font-weight: 900; }
+  .modal-status { font-size: 11px; color: var(--subtext); }
+
+  /* Half Time section */
+  .ht-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+  }
+  .ht-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--subtext);
+    margin-bottom: 14px;
+  }
+  .ht-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .ht-col {
+    flex: 1;
+    min-width: 160px;
+  }
+  .ht-col-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    color: var(--subtext);
+    margin-bottom: 8px;
+  }
+  .ht-score-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ht-score-box {
+    width: 48px; height: 48px;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 900;
+    border: 1px solid var(--border);
+    color: var(--text);
+    background: rgba(255,255,255,0.04);
+  }
+  .ht-score-box.actual { border-color: var(--yellow); color: var(--yellow); background: rgba(255,215,64,0.07); }
+  .ht-score-box.pred   { border-color: var(--accent);  color: var(--accent);  background: rgba(0,212,255,0.07); }
+  .ht-sep { font-size: 18px; color: var(--muted); font-weight: 900; }
+  .ht-na { font-size: 13px; color: var(--muted); font-style: italic; }
+
+  /* Make existing card content reusable in modal */
+  .modal-section-title {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.4px;
+    color: var(--subtext); margin-bottom: 10px; text-transform: uppercase;
+  }
+  .modal-body-section { margin-bottom: 20px; }
+
   /* ── Responsive ── */
   @media (max-width: 820px) {
     .controls-calendar-row { grid-template-columns: 1fr; }
@@ -1006,6 +1146,7 @@
         const res  = await fetch(`/api/predictions/football?league=${encodeURIComponent(league)}&date=${dateStr}`);
         const data = await res.json();
         loadedMatches = data.matches || [];
+        loadedMatches.forEach(m => { _allMatches[m.fixture_id] = m; });
         populateTeamDropdown(loadedMatches);
         if (!loadedMatches.length) {
           setEmpty('footballGrid', 'football', selectedDate.toLocaleDateString('en-GB', {day:'numeric',month:'short'}));
@@ -1020,7 +1161,9 @@
       try {
         const res  = await fetch('/api/predictions/basketball');
         const data = await res.json();
-        renderBasketball(data.matches || []);
+        const bMatches = data.matches || [];
+        bMatches.forEach(m => { _allMatches[m.game_id] = { ...m, status_bball: m.status }; });
+        renderBasketball(bMatches);
       } catch(e) {
         setError('basketballGrid', 'Could not reach the NBA data source.');
       }
@@ -1120,7 +1263,7 @@
       const delay = i * 0.05;
 
       return `
-        <div class="match-card" style="animation-delay:${delay}s">
+        <div class="match-card" style="animation-delay:${delay}s;cursor:pointer" onclick="openMatchModal('${m.fixture_id}')">
           <div class="card-header">
             <span class="league-name">⚽ ${m.league}</span>
             <span class="match-time">${formatTime(m.match_time)}</span>
@@ -1290,7 +1433,7 @@
       const delay = i * 0.05;
 
       return `
-        <div class="match-card" style="animation-delay:${delay}s">
+        <div class="match-card" style="animation-delay:${delay}s;cursor:pointer" onclick="openMatchModal('${m.game_id}')">
           <div class="card-header">
             <span class="league-name">🏀 NBA</span>
             <span class="match-time">${m.status || 'Today'}</span>
@@ -1438,6 +1581,216 @@
     });
   }
 
+  // ── Match Detail Modal ────────────────────────────────────────────────────
+  let _allMatches = {};  // fixture_id / game_id → match data
+
+  function openMatchModal(id) {
+    const m = _allMatches[id];
+    if (!m) return;
+    const modal = document.getElementById('matchModal');
+    const panel = document.getElementById('modalPanel');
+    panel.innerHTML = renderModalContent(m);
+    modal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeMatchModal() {
+    document.getElementById('matchModal').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  // Close on backdrop click
+  document.getElementById('matchModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('matchModal')) closeMatchModal();
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMatchModal(); });
+
+  function renderModalContent(m) {
+    const isBball = m.sport === 'basketball';
+    const p = m.prediction;
+    const f = m.features;
+    const sport = isBball ? 'basketball' : 'football';
+    const sportIcon = isBball ? '🏀' : '⚽';
+
+    // ── Header ──
+    const leagueRow = `
+      <div class="modal-league-row">
+        <span>${sportIcon} ${m.league || 'NBA'}</span>
+        ${m.match_time ? `<span>·</span><span>${formatTime(m.match_time)}</span>` : ''}
+        ${m.status ? `<span>·</span><span>${m.status}</span>` : m.status_bball ? `<span>·</span><span>${m.status_bball}</span>` : ''}
+        ${m.venue ? `<span class="modal-venue">📍 ${m.venue}</span>` : ''}
+      </div>`;
+
+    const homeLogo = m.home_team_logo
+      ? `<img src="${m.home_team_logo}" alt="${m.home_team}" onerror="this.style.display='none'">`
+      : `<span style="font-size:40px">${sportIcon}</span>`;
+    const awayLogo = m.away_team_logo
+      ? `<img src="${m.away_team_logo}" alt="${m.away_team}" onerror="this.style.display='none'">`
+      : `<span style="font-size:40px">${sportIcon}</span>`;
+
+    const teamsRow = `
+      <div class="modal-teams-row">
+        <div class="modal-team">
+          ${homeLogo}
+          <div class="modal-team-name">${m.home_team}</div>
+          <div class="modal-team-badge">${isBball ? (m.home_abbr || 'HOME') : 'HOME'}</div>
+        </div>
+        <div class="modal-score-center">
+          <div class="modal-score-boxes">
+            <div class="modal-score-box ${sport}">${p.predicted_home}</div>
+            <span class="modal-score-sep">–</span>
+            <div class="modal-score-box ${sport}">${p.predicted_away}</div>
+          </div>
+          <div class="modal-status">Predicted score</div>
+          ${(m.is_final || m.is_live) && m.home_goals != null ? `
+            <div style="margin-top:6px;font-size:12px;color:var(--subtext)">
+              Actual: <strong style="color:var(--text)">${m.home_goals}–${m.away_goals}</strong>
+              ${m.is_live ? `<span style="color:var(--red);font-weight:700"> LIVE</span>` : ''}
+            </div>` : ''}
+        </div>
+        <div class="modal-team">
+          ${awayLogo}
+          <div class="modal-team-name">${m.away_team}</div>
+          <div class="modal-team-badge">${isBball ? (m.away_abbr || 'AWAY') : 'AWAY'}</div>
+        </div>
+      </div>`;
+
+    // ── Half Time section (football only) ──
+    let htSection = '';
+    if (!isBball) {
+      const hasActualHT = m.home_goals_ht != null && m.away_goals_ht != null;
+      const hasPredHT   = p.predicted_home_ht != null && p.predicted_away_ht != null;
+      htSection = `
+        <div class="ht-section">
+          <div class="ht-section-title">⏱ HALF TIME</div>
+          <div class="ht-row">
+            <div class="ht-col">
+              <div class="ht-col-label">ACTUAL HT SCORE</div>
+              ${hasActualHT ? `
+                <div class="ht-score-row">
+                  <div class="ht-score-box actual">${m.home_goals_ht}</div>
+                  <span class="ht-sep">–</span>
+                  <div class="ht-score-box actual">${m.away_goals_ht}</div>
+                </div>` : `<div class="ht-na">Not yet available</div>`}
+            </div>
+            <div class="ht-col">
+              <div class="ht-col-label">PREDICTED HT SCORE</div>
+              ${hasPredHT ? `
+                <div class="ht-score-row">
+                  <div class="ht-score-box pred">${p.predicted_home_ht}</div>
+                  <span class="ht-sep">–</span>
+                  <div class="ht-score-box pred">${p.predicted_away_ht}</div>
+                </div>` : `<div class="ht-na">—</div>`}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // ── Prob bar ──
+    const bar = isBball
+      ? probBar(p.win_probability, undefined, p.loss_probability)
+      : probBar(p.win_probability, p.draw_probability, p.loss_probability);
+
+    // ── Stats ──
+    let statsHtml = '';
+    if (!isBball) {
+      statsHtml = `
+        <div class="modal-body-section">
+          <div class="modal-section-title">Stats</div>
+          <div class="stats-row">
+            <div class="stat-chip">xG Home <strong>${p.expected_home}</strong></div>
+            <div class="stat-chip">xG Away <strong>${p.expected_away}</strong></div>
+            <div class="stat-chip">Atk <strong>${f?.home_attack ?? '—'}</strong> vs Def <strong>${f?.away_defence ?? '—'}</strong></div>
+            ${f?.h2h_matches > 0 ? `<div class="stat-chip">H2H <strong>${f.h2h_matches} games</strong></div>` : ''}
+          </div>
+        </div>`;
+    } else {
+      statsHtml = `
+        <div class="modal-body-section">
+          <div class="modal-section-title">Stats</div>
+          <div class="stats-row">
+            <div class="stat-chip">Home range <strong>${p.home_range}</strong></div>
+            <div class="stat-chip">Away range <strong>${p.away_range}</strong></div>
+            <div class="stat-chip">Margin <strong>${p.predicted_margin > 0 ? '+' : ''}${p.predicted_margin}</strong></div>
+            <div class="stat-chip">ORtg <strong>${f?.home_off_rating?.toFixed(2) ?? '—'}</strong></div>
+            <div class="stat-chip">DRtg <strong>${f?.home_def_rating?.toFixed(2) ?? '—'}</strong></div>
+          </div>
+        </div>`;
+    }
+
+    // ── Scorelines + safe bet (football) ──
+    let scorelineSection = '';
+    if (!isBball) {
+      const sb = p.safe_bet;
+      const lastH2H = m.h2h && m.h2h.length > 0 ? m.h2h[0] : null;
+      scorelineSection = `
+        <div class="modal-body-section">
+          <div class="scorelines-safe-row">
+            <div class="scorelines-col">
+              <div class="scoreline-label">MOST LIKELY SCORELINES</div>
+              <div class="scorelines">
+                ${(p.top_scorelines || []).map((s, idx) =>
+                  `<div class="scoreline-chip ${idx===0?'top':''}">${s.scoreline} <span style="opacity:.6">${s.probability}%</span></div>`
+                ).join('')}
+              </div>
+              <div style="margin-top:10px;">
+                <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+              </div>
+            </div>
+            ${sb ? `
+            <div class="safe-bet-col">
+              <div class="safe-bet-label">SAFE BET</div>
+              <div class="safe-bet-line">Over ${sb.line}</div>
+              <div class="safe-bet-prob">${sb.probability}% probability</div>
+              ${lastH2H ? `
+                <div class="safe-bet-last-h2h">
+                  Last meeting<br>
+                  <strong>${lastH2H.home_team} ${lastH2H.home_goals}–${lastH2H.away_goals} ${lastH2H.away_team}</strong>
+                </div>` : ''}
+            </div>` : ''}
+          </div>
+        </div>`;
+    } else {
+      scorelineSection = `
+        <div class="modal-body-section">
+          <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+        </div>`;
+    }
+
+    // ── Form + H2H (football) ──
+    let formH2H = '';
+    if (!isBball && (m.home_form || m.away_form || m.h2h)) {
+      formH2H = `
+        <div class="form-h2h-section">
+          <div class="form-h2h-grid">
+            <div class="form-block">
+              <h4>${m.home_team} — Last 5</h4>
+              <div class="form-dots">${buildFormDots(m.home_form)}</div>
+            </div>
+            <div class="form-block">
+              <h4>${m.away_team} — Last 5</h4>
+              <div class="form-dots">${buildFormDots(m.away_form)}</div>
+            </div>
+          </div>
+          <div class="h2h-block">
+            <h4>Head to Head — Last 5</h4>
+            ${buildH2H(m.h2h, m.home_team, m.away_team, p, f)}
+          </div>
+        </div>`;
+    }
+
+    return `
+      <button class="modal-close" onclick="closeMatchModal()" title="Close">✕</button>
+      ${leagueRow}
+      ${teamsRow}
+      ${htSection}
+      ${bar}
+      ${statsHtml}
+      ${scorelineSection}
+      ${formH2H}
+    `;
+  }
+
   // ── Live Score Ticker ─────────────────────────────────────────────────────
   let _tickerScores = [];
 
@@ -1489,6 +1842,11 @@
   setInterval(loadPredictions, 30 * 60 * 1000);
   setInterval(loadLiveTicker, 60 * 1000);
 </script>
+
+<!-- Match Detail Modal -->
+<div id="matchModal" role="dialog" aria-modal="true">
+  <div class="modal-panel" id="modalPanel"></div>
+</div>
 
 <!-- Score Tickers -->
 <div id="tickerContainer">

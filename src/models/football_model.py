@@ -109,9 +109,17 @@ def predict_football_score(lambda_home: float, lambda_away: float) -> dict:
         safe_line = "under_0.5"
         safe_prob = under_05
 
+    # First-half predictions: Poisson is memoryless so HT lambda = full/2
+    ht_lambda_home = lambda_home / 2
+    ht_lambda_away = lambda_away / 2
+    predicted_home_ht = int(np.floor(ht_lambda_home))
+    predicted_away_ht = int(np.floor(ht_lambda_away))
+
     return {
         "predicted_home":    predicted_home,
         "predicted_away":    predicted_away,
+        "predicted_home_ht": predicted_home_ht,
+        "predicted_away_ht": predicted_away_ht,
         "expected_home":     round(exp_home, 2),
         "expected_away":     round(exp_away, 2),
         "win_probability":   round(win_prob  * 100, 1),

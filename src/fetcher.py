@@ -109,6 +109,22 @@ async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] 
             except (TypeError, ValueError):
                 return None
 
+        def _linescore(competitor, period_idx):
+            ls = competitor.get("linescores") or []
+            if period_idx < len(ls):
+                v = ls[period_idx].get("value")
+                try:
+                    return int(v) if v is not None else None
+                except (TypeError, ValueError):
+                    return None
+            return None
+
+        # HT available when in 2nd half, extra time, or completed
+        ht_available = is_final or status_name in (
+            "STATUS_SECOND_HALF", "STATUS_HALFTIME",
+            "STATUS_EXTRA_TIME", "STATUS_PENALTY",
+        )
+
         fixtures.append({
             "fixture_id":    event["id"],
             "date":          event["date"],
@@ -119,10 +135,12 @@ async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] 
             "home_team_id":  home["team"]["id"],
             "home_team_logo": _logo(home["team"]),
             "home_goals":    _score(home) if (is_live or is_final) else None,
+            "home_goals_ht": _linescore(home, 0) if ht_available else None,
             "away_team":     away["team"]["displayName"],
             "away_team_id":  away["team"]["id"],
             "away_team_logo": _logo(away["team"]),
             "away_goals":    _score(away) if (is_live or is_final) else None,
+            "away_goals_ht": _linescore(away, 0) if ht_available else None,
             "venue":         comp.get("venue", {}).get("fullName", ""),
             "league":        league_name,
             "league_slug":   league_slug,

@@ -1182,6 +1182,7 @@
     document.getElementById('basketballView').style.display = sport === 'basketball' ? '' : 'none';
     document.getElementById('accuracyView').style.display   = sport === 'accuracy'   ? '' : 'none';
     if (sport === 'accuracy') {
+      refreshTickerDisplay();
       loadScorecard();
       return;
     }
@@ -2048,7 +2049,8 @@
   }
 
   function refreshTickerDisplay() {
-    const sport = currentSport; // 'football' or 'basketball'
+    // Accuracy tab keeps the ticker showing — default to football scores
+    const sport = (currentSport === 'accuracy') ? 'football' : currentSport;
     const filtered = _tickerScores.filter(s => s.sport === sport);
     const live  = filtered.filter(s => s.is_live);
     const final = filtered.filter(s => s.is_final);

@@ -4,7 +4,6 @@ Serves predictions to the frontend and runs background refresh.
 """
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import date
@@ -26,9 +25,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Serve the static frontend
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.get("/")

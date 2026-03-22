@@ -1270,9 +1270,9 @@
     currentSport = sport;
     document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
     document.querySelector(`.nav-tab.${sport}`).classList.add('active');
-    document.getElementById('footballView').style.display   = sport === 'football'   ? '' : 'none';
-    document.getElementById('basketballView').style.display = sport === 'basketball' ? '' : 'none';
-    document.getElementById('accuracyView').style.display   = sport === 'accuracy'   ? '' : 'none';
+    document.getElementById('footballView').classList.toggle('hidden', sport !== 'football');
+    document.getElementById('basketballView').classList.toggle('hidden', sport !== 'basketball');
+    document.getElementById('accuracyView').classList.toggle('hidden', sport !== 'accuracy');
     if (sport === 'accuracy') {
       refreshTickerDisplay();
       loadScorecard();

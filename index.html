@@ -1814,14 +1814,23 @@
             </div>
 
             <div class="stats-row">
-              <div class="stat-chip">Range <strong>${p.home_range}</strong></div>
-              <div class="stat-chip">Range <strong>${p.away_range}</strong></div>
+              <div class="stat-chip">Home <strong>${p.home_range}</strong></div>
+              <div class="stat-chip">Away <strong>${p.away_range}</strong></div>
               <div class="stat-chip">Margin <strong>${p.predicted_margin > 0 ? '+' : ''}${p.predicted_margin}</strong></div>
               ${f?.h2h_matches > 0 ? `<div class="stat-chip">H2H <strong>${f.h2h_matches} games</strong></div>` : ''}
             </div>
 
-            <div style="margin-top:4px;">
-              <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+            <div class="scorelines-safe-row" style="margin-top:8px">
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+                <span class="stat-chip">Total ~${p.predicted_home + p.predicted_away} pts</span>
+              </div>
+              ${p.safe_bet ? `
+              <div class="safe-bet-col" style="min-width:130px">
+                <div class="safe-bet-label">SAFE BET</div>
+                <div class="safe-bet-line">Over ${p.safe_bet.line}</div>
+                <div class="safe-bet-prob">${p.safe_bet.probability}% probability</div>
+              </div>` : ''}
             </div>
           </div>
         </div>`;
@@ -2105,13 +2114,34 @@
           </div>
         </div>`;
     } else {
+      const bSb     = p.safe_bet;
+      const lastH2H = m.h2h && m.h2h.length > 0 ? m.h2h[0] : null;
       scorelineSection = `
         <div class="modal-body-section">
-          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-            <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
-            <span class="stat-chip">Margin <strong>${p.predicted_margin > 0 ? '+' : ''}${p.predicted_margin} pts</strong></span>
-            <span class="stat-chip">Home range <strong>${p.home_range}</strong></span>
-            <span class="stat-chip">Away range <strong>${p.away_range}</strong></span>
+          <div class="scorelines-safe-row">
+            <div class="scorelines-col">
+              <div class="scoreline-label">TOTAL POINTS</div>
+              <div style="font-size:28px;font-weight:900;color:var(--basketball);line-height:1.1">
+                ~${p.predicted_home + p.predicted_away}
+              </div>
+              <div style="font-size:11px;color:var(--subtext);margin-top:4px">
+                ${p.home_range} · ${p.away_range}
+              </div>
+              <div style="margin-top:10px">
+                <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+              </div>
+            </div>
+            ${bSb ? `
+            <div class="safe-bet-col">
+              <div class="safe-bet-label">SAFE BET</div>
+              <div class="safe-bet-line">Over ${bSb.line}</div>
+              <div class="safe-bet-prob">${bSb.probability}% probability</div>
+              ${lastH2H ? `
+                <div class="safe-bet-last-h2h">
+                  Last meeting<br>
+                  <strong>${lastH2H.home_team} ${lastH2H.home_goals}–${lastH2H.away_goals} ${lastH2H.away_team}</strong>
+                </div>` : ''}
+            </div>` : ''}
           </div>
         </div>`;
     }

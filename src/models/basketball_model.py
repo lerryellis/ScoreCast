@@ -52,6 +52,29 @@ def predict_basketball_score(features: dict) -> dict:
     else:
         confidence = 51
 
+    # Safe bet: highest total-points line where P(over) >= 65%
+    total_pred = home_pred + away_pred
+    total_std  = np.sqrt(home_std ** 2 + away_std ** 2)
+
+    def _over_prob(line: float) -> float:
+        if total_std <= 0:
+            return 1.0 if total_pred > line else 0.0
+        return float(1 - stats.norm.cdf(line, loc=total_pred, scale=total_std))
+
+    # Check lines stepping down from just below the predicted total
+    safe_line = None
+    safe_prob = None
+    base = round(total_pred / 5) * 5  # round to nearest 5
+    for offset in (17.5, 12.5, 7.5, 2.5, -2.5):
+        candidate = base - offset
+        p_over = _over_prob(candidate)
+        if p_over >= 0.65:
+            safe_line = candidate
+            safe_prob = round(p_over * 100, 1)
+            break
+
+    safe_bet = {"line": safe_line, "type": "over", "probability": safe_prob} if safe_line else None
+
     return {
         "predicted_home":    home_score,
         "predicted_away":    away_score,
@@ -61,6 +84,7 @@ def predict_basketball_score(features: dict) -> dict:
         "win_probability":   round(win_prob  * 100, 1),
         "loss_probability":  round(loss_prob * 100, 1),
         "confidence":        confidence,
+        "safe_bet":          safe_bet,
         "home_off_rating":   features.get("home_off_rating"),
         "away_off_rating":   features.get("away_off_rating"),
         "home_def_rating":   features.get("home_def_rating"),

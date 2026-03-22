@@ -105,6 +105,92 @@
   /* ── Accuracy View ── */
   #accuracyView { padding: 0 0 40px; }
   .accuracy-title-row { display:flex; align-items:center; gap:16px; padding:32px 0 24px; }
+
+  /* ── Weekly strip ── */
+  .week-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  .week-nav {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--subtext);
+    font-size: 16px;
+    width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .week-nav:hover { color: var(--text); border-color: var(--accent); }
+  .week-days {
+    display: flex;
+    gap: 6px;
+    flex: 1;
+  }
+  .week-day {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 4px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    min-width: 0;
+  }
+  .week-day:hover { border-color: var(--yellow); }
+  .week-day.active { border-color: var(--yellow); background: rgba(255,215,64,0.08); }
+  .week-day.today .wd-num { color: var(--yellow); }
+  .week-day.has-data .wd-num::after {
+    content: '';
+    display: block;
+    width: 5px; height: 5px;
+    background: var(--yellow);
+    border-radius: 50%;
+    margin: 3px auto 0;
+  }
+  .wd-label { font-size: 10px; color: var(--subtext); font-weight: 600; text-transform: uppercase; }
+  .wd-num   { font-size: 20px; font-weight: 900; color: var(--text); line-height: 1.1; margin-top: 2px; }
+
+  /* ── Day predictions table ── */
+  .day-predictions { margin-top: 4px; }
+  .day-pred-header {
+    font-size: 12px; font-weight: 700; color: var(--subtext);
+    text-transform: uppercase; letter-spacing: 0.4px;
+    margin-bottom: 10px;
+  }
+  .pred-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto 1fr;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .pred-row.correct   { border-color: rgba(0,230,118,0.35); }
+  .pred-row.wrong     { border-color: rgba(255,68,68,0.25); }
+  .pred-row.exact     { border-color: var(--green); background: rgba(0,230,118,0.05); }
+  .pred-row-team      { font-weight: 600; }
+  .pred-row-team.away { text-align: right; }
+  .pred-score-block   { text-align: center; min-width: 110px; }
+  .pred-score         { font-size: 18px; font-weight: 900; color: var(--accent); }
+  .pred-score-label   { font-size: 10px; color: var(--subtext); margin-top: 1px; }
+  .actual-score       { font-size: 18px; font-weight: 900; color: var(--text); }
+  .pred-badge         { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; text-transform: uppercase; }
+  .pred-badge.exact   { background: rgba(0,230,118,0.15); color: var(--green); }
+  .pred-badge.outcome { background: rgba(0,212,255,0.12); color: var(--accent); }
+  .pred-badge.wrong   { background: rgba(255,68,68,0.12); color: var(--red); }
+  .pred-badge.pending { background: rgba(255,215,64,0.1); color: var(--yellow); }
+  .pred-league-tag    { font-size: 10px; color: var(--subtext); margin-bottom: 3px; }
+  .day-empty { text-align:center; color:var(--subtext); padding: 32px 0; font-size:14px; }
   .accuracy-title-row .sport-icon { font-size:42px; }
   .accuracy-title-row h1 { font-size:26px; font-weight:800; }
   .accuracy-title-row p  { font-size:13px; color:var(--subtext); margin-top:4px; }
@@ -1081,6 +1167,18 @@
         <p>Self-correcting scorecard · Updated daily · Football predictions only</p>
       </div>
     </div>
+
+    <!-- Weekly strip -->
+    <div class="week-strip">
+      <button type="button" class="week-nav" onclick="weekNav(-1)" title="Previous week">&#9664;</button>
+      <div class="week-days" id="weekDays"></div>
+      <button type="button" class="week-nav" onclick="weekNav(1)" title="Next week">&#9654;</button>
+    </div>
+
+    <!-- Day predictions -->
+    <div id="dayPredictions" class="day-predictions"></div>
+
+    <!-- Scorecard summary -->
     <div id="scorecardContent"><div class="sc-pending"><div class="sp-count">—</div><p>Loading scorecard…</p></div></div>
   </div>
 
@@ -2214,7 +2312,111 @@
     return dt.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
   }
 
+  // ── Weekly strip ──────────────────────────────────────────────────────────
+  const WEEK_DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  let weekOffset  = 0;   // 0 = current week, -1 = last week, etc.
+  let activeDay   = formatISO(new Date());
+
+  function getWeekDates(offset) {
+    const today  = new Date(); today.setHours(0,0,0,0);
+    const dow    = today.getDay(); // 0=Sun
+    const monday = new Date(today); monday.setDate(today.getDate() - dow + 1 + offset * 7);
+    return Array.from({length: 7}, (_, i) => {
+      const d = new Date(monday); d.setDate(monday.getDate() + i);
+      return d;
+    });
+  }
+
+  function renderWeekStrip() {
+    const days    = getWeekDates(weekOffset);
+    const todayISO = formatISO(new Date());
+    document.getElementById('weekDays').innerHTML = days.map(d => {
+      const iso  = formatISO(d);
+      const cls  = [
+        iso === activeDay  ? 'active'   : '',
+        iso === todayISO   ? 'today'    : '',
+        iso < todayISO     ? 'has-data' : '',
+      ].filter(Boolean).join(' ');
+      return `<div class="week-day ${cls}" onclick="selectWeekDay('${iso}')">
+        <div class="wd-label">${WEEK_DAYS[d.getDay()]}</div>
+        <div class="wd-num">${d.getDate()}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function weekNav(dir) {
+    weekOffset += dir;
+    renderWeekStrip();
+  }
+
+  function selectWeekDay(iso) {
+    activeDay = iso;
+    renderWeekStrip();
+    loadDayPredictions(iso);
+  }
+
+  async function loadDayPredictions(iso) {
+    const el = document.getElementById('dayPredictions');
+    el.innerHTML = '<div class="day-empty">Loading…</div>';
+    try {
+      const res  = await fetch(`/api/predictions/day?date=${iso}`);
+      const data = await res.json();
+      renderDayPredictions(iso, data.matches || []);
+    } catch {
+      el.innerHTML = '<div class="day-empty">Could not load predictions.</div>';
+    }
+  }
+
+  function renderDayPredictions(iso, matches) {
+    const el = document.getElementById('dayPredictions');
+    const label = new Date(iso + 'T12:00:00').toLocaleDateString('en-GB',
+      { weekday:'long', day:'numeric', month:'long' });
+
+    if (!matches.length) {
+      el.innerHTML = `<div class="day-pred-header">${label}</div>
+        <div class="day-empty">No predictions saved for this date.</div>`;
+      return;
+    }
+
+    const rows = matches.map(m => {
+      const hasResult = m.actual_home !== null;
+      let rowCls = '', badge = '';
+      if (hasResult) {
+        if (m.exact_correct)        { rowCls = 'exact';   badge = '<span class="pred-badge exact">Exact ✓</span>'; }
+        else if (m.outcome_correct) { rowCls = 'correct'; badge = '<span class="pred-badge outcome">Outcome ✓</span>'; }
+        else                        { rowCls = 'wrong';   badge = '<span class="pred-badge wrong">Wrong ✗</span>'; }
+      } else {
+        badge = '<span class="pred-badge pending">Pending</span>';
+      }
+
+      const predScore   = `${m.predicted_home}–${m.predicted_away}`;
+      const actualScore = hasResult ? `${m.actual_home}–${m.actual_away}` : '?–?';
+
+      return `
+        <div class="pred-row ${rowCls}">
+          <div>
+            <div class="pred-league-tag">⚽ ${m.league}</div>
+            <div class="pred-row-team">${m.home_team}</div>
+          </div>
+          <div class="pred-score-block">
+            <div class="pred-score">${predScore}</div>
+            <div class="pred-score-label">Predicted</div>
+          </div>
+          <div class="pred-score-block">
+            <div class="actual-score">${actualScore}</div>
+            <div class="pred-score-label">${hasResult ? 'Actual' : '—'}</div>
+          </div>
+          <div>${badge}</div>
+          <div class="pred-row-team away">${m.away_team}</div>
+        </div>`;
+    }).join('');
+
+    el.innerHTML = `<div class="day-pred-header">${label} · ${matches.length} predictions</div>${rows}`;
+  }
+
   async function loadScorecard() {
+    renderWeekStrip();
+    loadDayPredictions(activeDay);
     const el = document.getElementById('scorecardContent');
     el.innerHTML = '<div class="sc-pending"><div class="sp-count">…</div><p>Loading scorecard…</p></div>';
     try {

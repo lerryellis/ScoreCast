@@ -286,6 +286,55 @@ async def scores_by_day(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/predictions/day")
+async def predictions_day(date: str = Query(None)):
+    """Return all predictions for a given date, with actual scores where resolved."""
+    from datetime import date as _date
+    from src.config import SUPABASE_URL, SUPABASE_KEY
+    d = date or _date.today().isoformat()
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {"date": d, "matches": []}
+    try:
+        from supabase import create_client
+        client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+        def _fetch():
+            rows = (
+                client.table("predictions")
+                      .select("*, prediction_results(*)")
+                      .eq("match_date", d)
+                      .order("home_team")
+                      .execute()
+            )
+            return rows.data or []
+
+        rows = await asyncio.to_thread(_fetch)
+        matches = []
+        for r in rows:
+            result = (r.get("prediction_results") or [None])[0]
+            matches.append({
+                "fixture_id":      r["fixture_id"],
+                "league":          r.get("league", ""),
+                "home_team":       r["home_team"],
+                "away_team":       r["away_team"],
+                "predicted_home":  r["predicted_home"],
+                "predicted_away":  r["predicted_away"],
+                "win_prob":        r.get("win_prob"),
+                "draw_prob":       r.get("draw_prob"),
+                "loss_prob":       r.get("loss_prob"),
+                "confidence":      r.get("confidence"),
+                "actual_home":     result["actual_home"]    if result else None,
+                "actual_away":     result["actual_away"]    if result else None,
+                "outcome_correct": result["outcome_correct"] if result else None,
+                "exact_correct":   result["exact_correct"]   if result else None,
+                "home_error":      result["home_error"]      if result else None,
+                "away_error":      result["away_error"]      if result else None,
+            })
+        return {"date": d, "matches": matches}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/scorecard")
 async def scorecard():
     """Public accuracy scorecard — aggregated prediction vs actual stats."""

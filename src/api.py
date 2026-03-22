@@ -323,12 +323,15 @@ async def predictions_day(date: str = Query(None)):
                 "draw_prob":       r.get("draw_prob"),
                 "loss_prob":       r.get("loss_prob"),
                 "confidence":      r.get("confidence"),
-                "actual_home":     result["actual_home"]    if result else None,
-                "actual_away":     result["actual_away"]    if result else None,
-                "outcome_correct": result["outcome_correct"] if result else None,
-                "exact_correct":   result["exact_correct"]   if result else None,
-                "home_error":      result["home_error"]      if result else None,
-                "away_error":      result["away_error"]      if result else None,
+                "safe_bet_line":   r.get("safe_bet_line"),
+                "safe_bet_prob":   r.get("safe_bet_prob"),
+                "actual_home":     result["actual_home"]        if result else None,
+                "actual_away":     result["actual_away"]        if result else None,
+                "outcome_correct": result["outcome_correct"]    if result else None,
+                "exact_correct":   result["exact_correct"]      if result else None,
+                "home_error":      result["home_error"]         if result else None,
+                "away_error":      result["away_error"]         if result else None,
+                "safe_bet_correct": result["safe_bet_correct"]  if result else None,
             })
         return {"date": d, "matches": matches}
     except Exception as e:

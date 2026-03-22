@@ -189,6 +189,11 @@
   .pred-badge.outcome { background: rgba(0,212,255,0.12); color: var(--accent); }
   .pred-badge.wrong   { background: rgba(255,68,68,0.12); color: var(--red); }
   .pred-badge.pending { background: rgba(255,215,64,0.1); color: var(--yellow); }
+  .pred-badges-col    { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  .sb-badge           { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; }
+  .sb-badge.hit       { background: rgba(0,230,118,0.15); color: var(--green); }
+  .sb-badge.miss      { background: rgba(255,68,68,0.12); color: var(--red); }
+  .sb-badge.pending   { background: rgba(255,215,64,0.1); color: var(--yellow); }
   .pred-league-tag    { font-size: 10px; color: var(--subtext); margin-bottom: 3px; }
   .day-empty { text-align:center; color:var(--subtext); padding: 32px 0; font-size:14px; }
   .accuracy-title-row .sport-icon { font-size:42px; }
@@ -2392,6 +2397,18 @@
       const predScore   = `${m.predicted_home}–${m.predicted_away}`;
       const actualScore = hasResult ? `${m.actual_home}–${m.actual_away}` : '?–?';
 
+      let safeBetHtml = '';
+      if (m.safe_bet_line !== null && m.safe_bet_line !== undefined) {
+        const sbLabel = `Over ${m.safe_bet_line} · ${m.safe_bet_prob}%`;
+        if (!hasResult) {
+          safeBetHtml = `<span class="sb-badge pending">${sbLabel}</span>`;
+        } else if (m.safe_bet_correct) {
+          safeBetHtml = `<span class="sb-badge hit">✓ ${sbLabel}</span>`;
+        } else {
+          safeBetHtml = `<span class="sb-badge miss">✗ ${sbLabel}</span>`;
+        }
+      }
+
       return `
         <div class="pred-row ${rowCls}">
           <div>
@@ -2406,7 +2423,7 @@
             <div class="actual-score">${actualScore}</div>
             <div class="pred-score-label">${hasResult ? 'Actual' : '—'}</div>
           </div>
-          <div>${badge}</div>
+          <div class="pred-badges-col">${badge}${safeBetHtml}</div>
           <div class="pred-row-team away">${m.away_team}</div>
         </div>`;
     }).join('');

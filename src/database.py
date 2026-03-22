@@ -119,6 +119,14 @@ def _resolve_sync(unresolved: list, fd_by_date: dict) -> int:
                 fd["away_ht"] == pred["predicted_away_ht"]
             )
 
+        safe_bet_correct = None
+        sb_line = pred.get("safe_bet_line")
+        if sb_line is not None:
+            try:
+                safe_bet_correct = (ah + aa) > float(sb_line)
+            except (ValueError, TypeError):
+                pass
+
         result = {
             "prediction_id":  pred["id"],
             "fixture_id":     pred["fixture_id"],
@@ -131,6 +139,7 @@ def _resolve_sync(unresolved: list, fd_by_date: dict) -> int:
             "home_error":      abs(ah - ph),
             "away_error":      abs(aa - pa),
             "ht_exact_correct": ht_correct,
+            "safe_bet_correct": safe_bet_correct,
         }
         try:
             client.table("prediction_results").upsert(

@@ -1248,10 +1248,9 @@
 
   function onDateClick(iso) {
     selectedDate = new Date(iso + 'T12:00:00');
-    // Reset team select back to all
     document.getElementById('teamSelect').value = '';
-    document.getElementById('teamScheduleWrap').style.display = 'none';
-    document.getElementById('footballGrid').style.display = '';
+    document.getElementById('teamScheduleWrap').classList.add('hidden');
+    document.getElementById('footballGrid').classList.remove('hidden');
     renderCalendar();
     loadPredictions();
   }
@@ -1259,8 +1258,8 @@
   function onBbDateClick(iso) {
     bbSelectedDate = new Date(iso + 'T12:00:00');
     document.getElementById('bbTeamSelect').value = '';
-    document.getElementById('bbTeamScheduleWrap').style.display = 'none';
-    document.getElementById('basketballGrid').style.display = '';
+    document.getElementById('bbTeamScheduleWrap').classList.add('hidden');
+    document.getElementById('basketballGrid').classList.remove('hidden');
     renderCalendar();
     loadPredictions();
   }
@@ -1279,7 +1278,8 @@
       return;
     }
     refreshTickerDisplay();
-    fetchFixtureDates();
+    renderCalendar();          // render calendar immediately, without waiting for API
+    fetchFixtureDates();       // then fetch game-date highlights in background
     loadPredictions();
   }
 
@@ -1314,8 +1314,8 @@
 
   function onTeamChange() {
     const val = document.getElementById('teamSelect').value;
-    document.getElementById('teamScheduleWrap').style.display = 'none';
-    document.getElementById('footballGrid').style.display = '';
+    document.getElementById('teamScheduleWrap').classList.add('hidden');
+    document.getElementById('footballGrid').classList.remove('hidden');
     if (!val) {
       renderFootball(loadedMatches);
       return;
@@ -1348,16 +1348,16 @@
 
   function onBbTeamChange() {
     const val = document.getElementById('bbTeamSelect').value;
-    document.getElementById('bbTeamScheduleWrap').style.display = 'none';
-    document.getElementById('basketballGrid').style.display = '';
+    document.getElementById('bbTeamScheduleWrap').classList.add('hidden');
+    document.getElementById('basketballGrid').classList.remove('hidden');
     if (!val) { renderBasketball(bbLoadedMatches); return; }
     const { id, name } = JSON.parse(val);
     loadNbaTeamSchedule(id, name);
   }
 
   async function loadNbaTeamSchedule(teamId, teamName) {
-    document.getElementById('basketballGrid').style.display = 'none';
-    document.getElementById('bbTeamScheduleWrap').style.display = '';
+    document.getElementById('basketballGrid').classList.add('hidden');
+    document.getElementById('bbTeamScheduleWrap').classList.remove('hidden');
     document.getElementById('bbTeamScheduleWrap').innerHTML = `
       <div class="team-schedule-wrap">
         <h2><button class="back-btn" onclick="backToBball()">&#9668; Back</button> ${teamName}</h2>
@@ -1373,8 +1373,8 @@
   }
 
   function backToBball() {
-    document.getElementById('bbTeamScheduleWrap').style.display = 'none';
-    document.getElementById('basketballGrid').style.display = '';
+    document.getElementById('bbTeamScheduleWrap').classList.add('hidden');
+    document.getElementById('basketballGrid').classList.remove('hidden');
     document.getElementById('bbTeamSelect').value = '';
     renderBasketball(bbLoadedMatches);
   }

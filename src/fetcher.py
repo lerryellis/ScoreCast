@@ -461,30 +461,53 @@ async def get_espn_nba_scoreboard(date_str: Optional[str] = None) -> list:
 async def get_espn_nba_dates_for_month(year: int, month: int) -> list:
     """
     Return list of ISO date strings (YYYY-MM-DD) that have at least one NBA event
-    in the given month, by checking each day in parallel.
+    in the given month. Uses a single date-range query (fast path), falls back to
+    day-by-day with a shared client and concurrency limit.
     """
     import calendar as _cal
     last_day = _cal.monthrange(year, month)[1]
+    start = f"{year}{month:02d}01"
+    end   = f"{year}{month:02d}{last_day:02d}"
 
-    async def _check_day(day: int) -> Optional[str]:
-        date_key = f"{year}{month:02d}{day:02d}"
+    # Fast path: single range query (same as football)
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{ESPN_NBA_BASE}/scoreboard",
+                params={"dates": f"{start}-{end}"},
+                timeout=20,
+            )
+            if r.status_code == 200:
+                dates = set()
+                for event in r.json().get("events", []):
+                    raw = event.get("date", "")
+                    if raw:
+                        dates.add(raw[:10])
+                if dates:
+                    return sorted(dates)
+    except Exception:
+        pass
+
+    # Fallback: check each day with shared client + semaphore (max 5 concurrent)
+    sem = asyncio.Semaphore(5)
+
+    async def _check_day(client: httpx.AsyncClient, day: int) -> Optional[str]:
         iso = f"{year}-{month:02d}-{day:02d}"
-        try:
-            async with httpx.AsyncClient() as client:
+        async with sem:
+            try:
                 r = await client.get(
                     f"{ESPN_NBA_BASE}/scoreboard",
-                    params={"dates": date_key},
+                    params={"dates": f"{year}{month:02d}{day:02d}"},
                     timeout=8,
                 )
-                r.raise_for_status()
-                data = r.json()
-            if data.get("events"):
-                return iso
-        except Exception:
-            pass
+                if r.status_code == 200 and r.json().get("events"):
+                    return iso
+            except Exception:
+                pass
         return None
 
-    results = await asyncio.gather(*[_check_day(d) for d in range(1, last_day + 1)])
+    async with httpx.AsyncClient() as client:
+        results = await asyncio.gather(*[_check_day(client, d) for d in range(1, last_day + 1)])
     return sorted(r for r in results if r is not None)
 
 

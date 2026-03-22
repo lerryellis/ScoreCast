@@ -157,6 +157,11 @@ async def predict_basketball_game(game: dict) -> dict:
     )
     prediction = predict_basketball_score(features)
 
+    # Normalise form to same shape frontend expects
+    def _fmt_form(games):
+        return [{"date": g["date"], "goals_for": g["pts_for"], "goals_ag": g["pts_ag"],
+                 "is_home": g.get("is_home", True)} for g in games[:5]]
+
     return {
         "sport":          "basketball",
         "game_id":        game.get("game_id", ""),
@@ -173,6 +178,9 @@ async def predict_basketball_game(game: dict) -> dict:
         "is_final":       game.get("is_final", False),
         "home_score":     game.get("home_score"),
         "away_score":     game.get("away_score"),
+        "home_form":      _fmt_form(home_games),
+        "away_form":      _fmt_form(away_games),
+        "h2h":            h2h[:5],
         "prediction":     prediction,
         "features":       features,
     }

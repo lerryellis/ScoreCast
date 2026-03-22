@@ -1536,6 +1536,25 @@
     }).join('');
   }
 
+  function buildBballFormDots(games) {
+    if (!games || !games.length) return '<span style="color:var(--muted);font-size:11px">No data</span>';
+    return games.map(g => {
+      const res = g.goals_for > g.goals_ag ? 'W' : 'L';
+      const ha  = g.is_home ? 'H' : 'A';
+      return `<div class="form-dot ${res}">${res}<span class="score-tip">${ha} ${g.goals_for}–${g.goals_ag}</span></div>`;
+    }).join('');
+  }
+
+  function buildBballH2H(h2h) {
+    if (!h2h || !h2h.length) return '<span style="color:var(--muted);font-size:11px">No H2H data</span>';
+    return h2h.map(g => `
+      <div class="h2h-row">
+        <span style="color:var(--subtext);font-size:10px">${formatShortDate(g.date)}</span>
+        <span class="h2h-teams">${g.home_team} vs ${g.away_team}</span>
+        <span class="h2h-score">${g.home_goals}–${g.away_goals}</span>
+      </div>`).join('');
+  }
+
   function buildH2H(h2h, homeTeam, awayTeam, prediction, features) {
     if (!h2h || !h2h.length) return '<span style="color:var(--muted);font-size:11px">No H2H data</span>';
 
@@ -1750,6 +1769,12 @@
       const f     = m.features;
       const delay = i * 0.05;
 
+      const actualRow = (m.is_final || m.is_live) && m.home_score != null ? `
+        <div style="text-align:center;margin-top:6px;font-size:12px;color:var(--subtext)">
+          Actual: <strong style="color:${m.is_live ? 'var(--red)' : 'var(--text)'}">${m.home_score}–${m.away_score}</strong>
+          ${m.is_live ? '<span style="color:var(--red);font-weight:700"> ● LIVE</span>' : '<span style="color:var(--green)"> FT</span>'}
+        </div>` : '';
+
       return `
         <div class="match-card" style="animation-delay:${delay}s;cursor:pointer" onclick="openMatchModal('${m.game_id}')">
           <div class="card-header">
@@ -1759,6 +1784,7 @@
           <div class="card-body">
             <div class="score-row">
               <div class="team home">
+                ${m.home_team_logo ? `<img class="team-logo" src="${m.home_team_logo}" alt="${m.home_team}" onerror="this.style.display='none'">` : ''}
                 <div class="team-name">${m.home_team}</div>
                 <div class="team-badge">${m.home_abbr || 'HOME'}</div>
               </div>
@@ -1768,19 +1794,29 @@
                 <div class="score-box basketball">${p.predicted_away}</div>
               </div>
               <div class="team away">
+                ${m.away_team_logo ? `<img class="team-logo" src="${m.away_team_logo}" alt="${m.away_team}" onerror="this.style.display='none'">` : ''}
                 <div class="team-name">${m.away_team}</div>
                 <div class="team-badge">${m.away_abbr || 'AWAY'}</div>
               </div>
             </div>
 
+            ${actualRow}
             ${probBar(p.win_probability, undefined, p.loss_probability)}
 
+            <div class="form-row-compact" style="display:flex;justify-content:space-between;margin:8px 0 4px;">
+              <div style="display:flex;gap:4px;align-items:center">
+                <span style="font-size:10px;color:var(--subtext);margin-right:2px">Form</span>
+                ${buildBballFormDots(m.home_form)}
+              </div>
+              <div style="display:flex;gap:4px;align-items:center">
+                ${buildBballFormDots(m.away_form)}
+              </div>
+            </div>
+
             <div class="stats-row">
-              <div class="stat-chip">Home range <strong>${p.home_range}</strong></div>
-              <div class="stat-chip">Away range <strong>${p.away_range}</strong></div>
+              <div class="stat-chip">Range <strong>${p.home_range}</strong></div>
+              <div class="stat-chip">Range <strong>${p.away_range}</strong></div>
               <div class="stat-chip">Margin <strong>${p.predicted_margin > 0 ? '+' : ''}${p.predicted_margin}</strong></div>
-              <div class="stat-chip">ORtg <strong>${f?.home_off_rating?.toFixed(2) ?? '—'}</strong></div>
-              <div class="stat-chip">DRtg <strong>${f?.home_def_rating?.toFixed(2) ?? '—'}</strong></div>
               ${f?.h2h_matches > 0 ? `<div class="stat-chip">H2H <strong>${f.h2h_matches} games</strong></div>` : ''}
             </div>
 
@@ -2071,12 +2107,38 @@
     } else {
       scorelineSection = `
         <div class="modal-body-section">
-          <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
+            <span class="stat-chip">Margin <strong>${p.predicted_margin > 0 ? '+' : ''}${p.predicted_margin} pts</strong></span>
+            <span class="stat-chip">Home range <strong>${p.home_range}</strong></span>
+            <span class="stat-chip">Away range <strong>${p.away_range}</strong></span>
+          </div>
+        </div>`;
+    }
+
+    // ── Form + H2H ──
+    let formH2H = '';
+    if (isBball && (m.home_form || m.away_form || m.h2h)) {
+      formH2H = `
+        <div class="form-h2h-section">
+          <div class="form-h2h-grid">
+            <div class="form-block">
+              <h4>${m.home_team} — Last 5</h4>
+              <div class="form-dots">${buildBballFormDots(m.home_form)}</div>
+            </div>
+            <div class="form-block">
+              <h4>${m.away_team} — Last 5</h4>
+              <div class="form-dots">${buildBballFormDots(m.away_form)}</div>
+            </div>
+          </div>
+          <div class="h2h-block">
+            <h4>Head to Head — Last 5</h4>
+            ${buildBballH2H(m.h2h)}
+          </div>
         </div>`;
     }
 
     // ── Form + H2H (football) ──
-    let formH2H = '';
     if (!isBball && (m.home_form || m.away_form || m.h2h)) {
       formH2H = `
         <div class="form-h2h-section">

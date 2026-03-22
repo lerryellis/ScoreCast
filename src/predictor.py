@@ -172,9 +172,9 @@ async def predict_basketball_game(game: dict) -> dict:
     }
 
 
-async def get_all_basketball_predictions() -> list:
-    """Fetch today's NBA games (ESPN + nba_api fallback) and predict all."""
-    games = await get_nba_scoreboard()
+async def get_all_basketball_predictions(target_date: str = None) -> list:
+    """Fetch NBA games (ESPN + nba_api fallback) for a given date and predict all."""
+    games = await get_nba_scoreboard(target_date)
     if not games:
         return []
 

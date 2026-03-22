@@ -18,6 +18,7 @@ from src.fetcher import (
     get_espn_team_schedule_raw, get_espn_fixture_dates_for_month,
     get_espn_soccer_fixtures, get_espn_nba_scoreboard, get_nba_scoreboard,
     get_football_data_ht_scores, get_thesportsdb_day,
+    get_espn_nba_dates_for_month, get_espn_nba_full_team_schedule,
 )
 from src.config import ESPN_FOOTBALL_LEAGUES
 
@@ -57,10 +58,67 @@ async def football_predictions(
 
 
 @app.get("/api/predictions/basketball")
-async def basketball_predictions():
+async def basketball_predictions(date: str = Query(None)):
     try:
-        predictions = await get_all_basketball_predictions()
+        predictions = await get_all_basketball_predictions(target_date=date)
         return {"sport": "basketball", "matches": predictions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/basketball/game-dates")
+async def nba_game_dates(year: int = Query(None), month: int = Query(None)):
+    from datetime import date as _date
+    today = _date.today()
+    y = year or today.year
+    m = month or today.month
+    try:
+        dates = await get_espn_nba_dates_for_month(y, m)
+        return {"year": y, "month": m, "dates": dates}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/basketball/team-schedule")
+async def nba_team_schedule(team_id: str = Query(...)):
+    try:
+        from src.predictor import predict_basketball_game
+        events = await get_espn_nba_full_team_schedule(team_id)
+        results = []
+        for event in events:
+            comp = event["competitions"][0]
+            status = comp.get("status", {}).get("type", {})
+            completed = status.get("completed", False)
+            competitors = comp["competitors"]
+            home = next((c for c in competitors if c["homeAway"] == "home"), None)
+            away = next((c for c in competitors if c["homeAway"] == "away"), None)
+            if not home or not away:
+                continue
+            entry = {
+                "game_id":      event["id"],
+                "date":         event["date"],
+                "home_team":    home["team"]["displayName"],
+                "home_team_id": home["team"]["id"],
+                "home_abbr":    home["team"].get("abbreviation", ""),
+                "away_team":    away["team"]["displayName"],
+                "away_team_id": away["team"]["id"],
+                "away_abbr":    away["team"].get("abbreviation", ""),
+                "completed":    completed,
+                "status_text":  status.get("shortDetail", ""),
+            }
+            if completed:
+                hs = home.get("score", {})
+                as_ = away.get("score", {})
+                entry["home_score"] = int(hs.get("value", 0) if isinstance(hs, dict) else (hs or 0))
+                entry["away_score"] = int(as_.get("value", 0) if isinstance(as_, dict) else (as_ or 0))
+            else:
+                try:
+                    pred = await predict_basketball_game(entry)
+                    entry["prediction"] = pred["prediction"]
+                except Exception:
+                    pass
+            results.append(entry)
+        return {"team_id": team_id, "matches": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

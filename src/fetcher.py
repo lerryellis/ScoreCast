@@ -416,10 +416,13 @@ async def _get_espn_nba_teams() -> dict:
     return _espn_nba_teams
 
 
-async def get_espn_nba_scoreboard() -> list:
-    """Get today's NBA games from ESPN."""
+async def get_espn_nba_scoreboard(date_str: Optional[str] = None) -> list:
+    """Get NBA games from ESPN for a given date (ISO YYYY-MM-DD), or today if not provided."""
+    params = {}
+    if date_str:
+        params["dates"] = date_str.replace("-", "")  # ESPN expects YYYYMMDD
     async with httpx.AsyncClient() as client:
-        r = await client.get(f"{ESPN_NBA_BASE}/scoreboard", timeout=15)
+        r = await client.get(f"{ESPN_NBA_BASE}/scoreboard", params=params, timeout=15)
         r.raise_for_status()
         data = r.json()
 
@@ -453,6 +456,52 @@ async def get_espn_nba_scoreboard() -> list:
             "away_team_logo": (away["team"].get("logos") or [{}])[0].get("href", ""),
         })
     return games
+
+
+async def get_espn_nba_dates_for_month(year: int, month: int) -> list:
+    """
+    Return list of ISO date strings (YYYY-MM-DD) that have at least one NBA event
+    in the given month, by checking each day in parallel.
+    """
+    import calendar as _cal
+    last_day = _cal.monthrange(year, month)[1]
+
+    async def _check_day(day: int) -> Optional[str]:
+        date_key = f"{year}{month:02d}{day:02d}"
+        iso = f"{year}-{month:02d}-{day:02d}"
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(
+                    f"{ESPN_NBA_BASE}/scoreboard",
+                    params={"dates": date_key},
+                    timeout=8,
+                )
+                r.raise_for_status()
+                data = r.json()
+            if data.get("events"):
+                return iso
+        except Exception:
+            pass
+        return None
+
+    results = await asyncio.gather(*[_check_day(d) for d in range(1, last_day + 1)])
+    return sorted(r for r in results if r is not None)
+
+
+async def get_espn_nba_full_team_schedule(team_id: str) -> list:
+    """Return all events for an NBA team (completed and upcoming) from ESPN."""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{ESPN_NBA_BASE}/teams/{team_id}/schedule",
+                timeout=15,
+            )
+            if r.status_code != 200:
+                return []
+            data = r.json()
+        return data.get("events", [])
+    except Exception:
+        return []
 
 
 async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
@@ -667,13 +716,13 @@ def _nba_api_live_scoreboard() -> list:
         return []
 
 
-async def get_nba_scoreboard() -> list:
+async def get_nba_scoreboard(date_str: Optional[str] = None) -> list:
     """
-    Today's NBA games. ESPN is primary (team IDs + logos).
-    Falls back to nba_api live CDN when ESPN fails.
+    NBA games for a given date (or today). ESPN is primary (team IDs + logos).
+    Falls back to nba_api live CDN when ESPN fails (today only).
     """
     try:
-        games = await get_espn_nba_scoreboard()
+        games = await get_espn_nba_scoreboard(date_str)
         if games:
             return games
     except Exception as e:

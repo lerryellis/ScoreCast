@@ -1090,10 +1090,27 @@
       <span class="sport-icon">🏀</span>
       <div>
         <h1>NBA Predictions</h1>
-        <p>XGBoost regression model · Live NBA data</p>
+        <p>Multi-source model · ESPN live data · Updated every 30 minutes</p>
       </div>
     </div>
+
+    <!-- Controls + Calendar -->
+    <div class="controls-calendar-row">
+      <div class="controls-panel">
+        <div class="select-group">
+          <label>Team</label>
+          <select id="bbTeamSelect" title="Select NBA team" onchange="onBbTeamChange()">
+            <option value="">All Teams</option>
+          </select>
+        </div>
+      </div>
+      <!-- Calendar -->
+      <div class="calendar-panel" id="bbCalendarPanel"></div>
+    </div>
+
+    <!-- Match grid OR team schedule -->
     <div id="basketballGrid" class="matches-grid"></div>
+    <div id="bbTeamScheduleWrap" style="display:none"></div>
   </div>
 
 </main>
@@ -1131,6 +1148,12 @@
   let loadedMatches  = [];   // cache for team dropdown population
   let fixtureDates   = new Set();  // ISO dates with games for selected league+month
 
+  // Basketball calendar state (mirrors football)
+  let bbSelectedDate  = new Date();
+  let bbCalendarDate  = new Date();
+  let bbGameDates     = new Set();
+  let bbLoadedMatches = [];
+
   // ── Date badge ────────────────────────────────────────────────────────────
   document.getElementById('dateBadge').textContent =
     new Date().toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short', year:'numeric' });
@@ -1145,10 +1168,18 @@
   }
 
   function renderCalendar() {
-    const year  = calendarDate.getFullYear();
-    const month = calendarDate.getMonth();
+    if (currentSport === 'basketball') {
+      _renderCalendarTo('bbCalendarPanel', bbCalendarDate, bbSelectedDate, bbGameDates, 'onBbDateClick');
+      return;
+    }
+    _renderCalendarTo('calendarPanel', calendarDate, selectedDate, fixtureDates, 'onDateClick');
+  }
+
+  function _renderCalendarTo(panelId, calDate, selDate, gameDates, clickFn) {
+    const year  = calDate.getFullYear();
+    const month = calDate.getMonth();
     const today = new Date(); today.setHours(0,0,0,0);
-    const sel   = new Date(selectedDate); sel.setHours(0,0,0,0);
+    const sel   = new Date(selDate); sel.setHours(0,0,0,0);
     const first = new Date(year, month, 1);
     const last  = new Date(year, month + 1, 0);
     let startDow = (first.getDay() + 6) % 7; // Mon=0
@@ -1171,18 +1202,29 @@
       let cls = '';
       if (dt.getTime() === sel.getTime()) cls = 'selected';
       else if (dt.getTime() === today.getTime()) cls = 'today';
-      if (fixtureDates.has(isoStr)) cls += ' has-games';
-      html += `<div class="cal-day ${cls}" onclick="onDateClick('${isoStr}')">${d}</div>`;
+      if (gameDates.has(isoStr)) cls += ' has-games';
+      html += `<div class="cal-day ${cls}" onclick="${clickFn}('${isoStr}')">${d}</div>`;
     }
     html += `</div>`;
 
     const selLabel = sel.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
     html += `<div class="cal-selected-label">Showing: <strong>${selLabel}</strong></div>`;
 
-    document.getElementById('calendarPanel').innerHTML = html;
+    document.getElementById(panelId).innerHTML = html;
   }
 
   async function fetchFixtureDates() {
+    if (currentSport === 'basketball') {
+      const year  = bbCalendarDate.getFullYear();
+      const month = bbCalendarDate.getMonth() + 1;
+      try {
+        const res  = await fetch(`/api/basketball/game-dates?year=${year}&month=${month}`);
+        const data = await res.json();
+        bbGameDates = new Set(data.dates || []);
+      } catch { bbGameDates = new Set(); }
+      renderCalendar();
+      return;
+    }
     if (currentSport !== 'football') return;
     const league = document.getElementById('leagueSelect').value;
     const year   = calendarDate.getFullYear();
@@ -1195,8 +1237,14 @@
     renderCalendar();
   }
 
-  function calPrev() { calendarDate.setMonth(calendarDate.getMonth()-1); fetchFixtureDates(); }
-  function calNext() { calendarDate.setMonth(calendarDate.getMonth()+1); fetchFixtureDates(); }
+  function calPrev() {
+    if (currentSport === 'basketball') { bbCalendarDate.setMonth(bbCalendarDate.getMonth()-1); fetchFixtureDates(); }
+    else { calendarDate.setMonth(calendarDate.getMonth()-1); fetchFixtureDates(); }
+  }
+  function calNext() {
+    if (currentSport === 'basketball') { bbCalendarDate.setMonth(bbCalendarDate.getMonth()+1); fetchFixtureDates(); }
+    else { calendarDate.setMonth(calendarDate.getMonth()+1); fetchFixtureDates(); }
+  }
 
   function onDateClick(iso) {
     selectedDate = new Date(iso + 'T12:00:00');
@@ -1204,6 +1252,15 @@
     document.getElementById('teamSelect').value = '';
     document.getElementById('teamScheduleWrap').style.display = 'none';
     document.getElementById('footballGrid').style.display = '';
+    renderCalendar();
+    loadPredictions();
+  }
+
+  function onBbDateClick(iso) {
+    bbSelectedDate = new Date(iso + 'T12:00:00');
+    document.getElementById('bbTeamSelect').value = '';
+    document.getElementById('bbTeamScheduleWrap').style.display = 'none';
+    document.getElementById('basketballGrid').style.display = '';
     renderCalendar();
     loadPredictions();
   }
@@ -1222,6 +1279,7 @@
       return;
     }
     refreshTickerDisplay();
+    fetchFixtureDates();
     loadPredictions();
   }
 
@@ -1267,6 +1325,93 @@
       String(m.home_team_id) === String(id) || String(m.away_team_id) === String(id)
     );
     renderFootball(filtered);
+  }
+
+  // ── Basketball Team Dropdown ───────────────────────────────────────────────
+  function populateBbTeamDropdown(matches) {
+    const sel = document.getElementById('bbTeamSelect');
+    const prevVal = sel.value;
+    const teams = new Map();
+    matches.forEach(m => {
+      if (!teams.has(m.home_team)) teams.set(m.home_team, { id: m.home_team_id });
+      if (!teams.has(m.away_team)) teams.set(m.away_team, { id: m.away_team_id });
+    });
+    sel.innerHTML = '<option value="">All Teams</option>';
+    [...teams.entries()].sort((a,b) => a[0].localeCompare(b[0])).forEach(([name, info]) => {
+      const opt = document.createElement('option');
+      opt.value = JSON.stringify({ name, id: info.id });
+      opt.textContent = name;
+      sel.appendChild(opt);
+    });
+    if (prevVal) sel.value = prevVal;
+  }
+
+  function onBbTeamChange() {
+    const val = document.getElementById('bbTeamSelect').value;
+    document.getElementById('bbTeamScheduleWrap').style.display = 'none';
+    document.getElementById('basketballGrid').style.display = '';
+    if (!val) { renderBasketball(bbLoadedMatches); return; }
+    const { id, name } = JSON.parse(val);
+    loadNbaTeamSchedule(id, name);
+  }
+
+  async function loadNbaTeamSchedule(teamId, teamName) {
+    document.getElementById('basketballGrid').style.display = 'none';
+    document.getElementById('bbTeamScheduleWrap').style.display = '';
+    document.getElementById('bbTeamScheduleWrap').innerHTML = `
+      <div class="team-schedule-wrap">
+        <h2><button class="back-btn" onclick="backToBball()">&#9668; Back</button> ${teamName}</h2>
+        <div class="state-box"><div class="spinner"></div><h3>Loading schedule&#x2026;</h3></div>
+      </div>`;
+    try {
+      const res  = await fetch(`/api/basketball/team-schedule?team_id=${teamId}`);
+      const data = await res.json();
+      renderNbaTeamSchedule(teamName, data.matches || []);
+    } catch(e) {
+      document.getElementById('bbTeamScheduleWrap').innerHTML = `<div class="state-box"><div class="icon">&#x26A0;&#xFE0F;</div><h3>Could not load schedule</h3></div>`;
+    }
+  }
+
+  function backToBball() {
+    document.getElementById('bbTeamScheduleWrap').style.display = 'none';
+    document.getElementById('basketballGrid').style.display = '';
+    document.getElementById('bbTeamSelect').value = '';
+    renderBasketball(bbLoadedMatches);
+  }
+
+  function renderNbaTeamSchedule(name, matches) {
+    const completed = matches.filter(m => m.completed).sort((a,b) => b.date.localeCompare(a.date));
+    const upcoming  = matches.filter(m => !m.completed).sort((a,b) => a.date.localeCompare(b.date));
+
+    function completedRow(m) {
+      return `
+        <div class="schedule-row">
+          <span class="sr-date">${formatShortDate(m.date)}</span>
+          <span class="sr-opponent">${m.home_team} vs ${m.away_team}</span>
+          <span class="sr-score">${m.home_score}&#x2013;${m.away_score}</span>
+          <span class="sr-result ${m.status_text === 'Final' ? 'final' : ''}">${m.status_text}</span>
+        </div>`;
+    }
+
+    function upcomingRow(m) {
+      const pred = m.prediction;
+      return `
+        <div class="schedule-row upcoming" onclick="openMatchModal('${m.game_id}')" style="cursor:pointer">
+          <span class="sr-date">${formatShortDate(m.date)}</span>
+          <span class="sr-opponent">${m.home_team} vs ${m.away_team}</span>
+          ${pred ? `<span class="sr-pred">Pred: ${pred.predicted_home}&#x2013;${pred.predicted_away}</span>` : ''}
+          <span class="sr-result">${m.status_text || 'Upcoming'}</span>
+        </div>`;
+    }
+
+    document.getElementById('bbTeamScheduleWrap').innerHTML = `
+      <div class="team-schedule-wrap">
+        <h2><button class="back-btn" onclick="backToBball()">&#9668; Back</button> ${name}</h2>
+        ${upcoming.length ? `<h3 style="margin:16px 0 10px;font-size:14px;color:var(--subtext)">UPCOMING (${upcoming.length})</h3>
+          <div class="schedule-list">${upcoming.map(upcomingRow).join('')}</div>` : ''}
+        ${completed.length ? `<h3 style="margin:20px 0 10px;font-size:14px;color:var(--subtext)">RESULTS (${completed.length})</h3>
+          <div class="schedule-list">${completed.map(completedRow).join('')}</div>` : ''}
+      </div>`;
   }
 
   // ── Loading / Error / Empty states ────────────────────────────────────────
@@ -1323,13 +1468,20 @@
         setError('footballGrid', 'Could not reach the server. Is it running?');
       }
     } else {
+      const dateStr = formatISO(bbSelectedDate);
       setLoading('basketballGrid');
       try {
-        const res  = await fetch('/api/predictions/basketball');
+        const res  = await fetch(`/api/predictions/basketball?date=${dateStr}`);
         const data = await res.json();
         const bMatches = data.matches || [];
         bMatches.forEach(m => { _allMatches[m.game_id] = { ...m, status_bball: m.status }; });
-        renderBasketball(bMatches);
+        bbLoadedMatches = bMatches;
+        populateBbTeamDropdown(bMatches);
+        if (!bMatches.length) {
+          setEmpty('basketballGrid', 'basketball', bbSelectedDate.toLocaleDateString('en-GB', {day:'numeric',month:'short'}));
+        } else {
+          renderBasketball(bMatches);
+        }
       } catch(e) {
         setError('basketballGrid', 'Could not reach the NBA data source.');
       }

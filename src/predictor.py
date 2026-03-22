@@ -19,7 +19,9 @@ from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES
 
 # ─── Football ─────────────────────────────────────────────────────────────────
 
-async def predict_football_fixture(fixture: dict, standings: dict = None, **_) -> dict:
+async def predict_football_fixture(fixture: dict, standings: dict = None,
+                                    home_bias: float = 1.0, away_bias: float = 1.0,
+                                    **_) -> dict:
     """Full prediction pipeline for one football fixture."""
     home_id     = fixture["home_team_id"]
     away_id     = fixture["away_team_id"]
@@ -40,7 +42,14 @@ async def predict_football_fixture(fixture: dict, standings: dict = None, **_) -
         fixture["home_team"], fixture["away_team"],
         home_rank=home_rank, away_rank=away_rank,
     )
-    prediction = predict_football_score(features["lambda_home"], features["lambda_away"])
+    # Apply bias calibration from historical prediction errors
+    calibrated_lh = features["lambda_home"] * home_bias
+    calibrated_la = features["lambda_away"] * away_bias
+    features["lambda_home"] = round(calibrated_lh, 4)
+    features["lambda_away"] = round(calibrated_la, 4)
+    features["home_bias_applied"] = round(home_bias, 4)
+    features["away_bias_applied"] = round(away_bias, 4)
+    prediction = predict_football_score(calibrated_lh, calibrated_la)
 
     return {
         "sport":         "football",
@@ -81,16 +90,26 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 
     date_str = target_date or _date.today().isoformat()
 
-    fixtures, standings, fd_matches = await asyncio.gather(
+    from src.database import get_bias_factors
+    fixtures, standings, fd_matches, bias = await asyncio.gather(
         get_espn_soccer_fixtures(league_slug, target_date),
         get_espn_standings(league_slug),
         get_football_data_ht_scores(date_str),
+        get_bias_factors(),
     )
+
+    # Pick league-specific bias if available, else global
+    league_bias = bias.get("leagues", {}).get(league_name) or bias.get("global", {})
+    home_bias = league_bias.get("home", 1.0)
+    away_bias = league_bias.get("away", 1.0)
 
     results = []
     for fixture in fixtures:
         try:
-            pred = await predict_football_fixture(fixture, standings=standings)
+            pred = await predict_football_fixture(
+                fixture, standings=standings,
+                home_bias=home_bias, away_bias=away_bias,
+            )
 
             # Enrich with HT scores from football-data.org (better source than ESPN)
             fd = match_ht_to_fixture(fd_matches, fixture["home_team"], fixture["away_team"])

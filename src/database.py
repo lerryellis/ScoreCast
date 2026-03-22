@@ -266,6 +266,86 @@ def _scorecard_sync() -> dict:
     }
 
 
+
+# ── Bias calibration ───────────────────────────────────────────────────────────
+
+MIN_BIAS_SAMPLE = 15   # don't calibrate until we have this many resolved results
+
+_bias_cache: dict = {}
+_bias_cache_date: str = ""
+
+
+def _bias_sync() -> dict:
+    """
+    Compute home/away goal bias from resolved predictions.
+    bias = mean(actual) / mean(predicted)
+    A bias > 1.0 means we're under-predicting goals; < 1.0 means over-predicting.
+    Returns per-league biases where N >= 5, plus a global fallback.
+    """
+    client = _get_client()
+    try:
+        rows = (
+            client.table("prediction_results")
+                  .select("actual_home, actual_away, prediction_id, predictions(predicted_home, predicted_away, league)")
+                  .execute()
+        ).data or []
+    except Exception:
+        return {"global": {"home": 1.0, "away": 1.0}, "leagues": {}}
+
+    if len(rows) < MIN_BIAS_SAMPLE:
+        return {"global": {"home": 1.0, "away": 1.0}, "leagues": {}, "n": len(rows)}
+
+    # Global bias
+    sum_ah = sum(r["actual_home"] for r in rows)
+    sum_aa = sum(r["actual_away"] for r in rows)
+    sum_ph = sum((r.get("predictions") or {}).get("predicted_home", 0) or 0 for r in rows)
+    sum_pa = sum((r.get("predictions") or {}).get("predicted_away", 0) or 0 for r in rows)
+
+    global_home = round(min(max(sum_ah / sum_ph, 0.70), 1.30), 4) if sum_ph > 0 else 1.0
+    global_away = round(min(max(sum_aa / sum_pa, 0.70), 1.30), 4) if sum_pa > 0 else 1.0
+
+    # Per-league bias (only when N >= 5)
+    from collections import defaultdict
+    by_league: dict = defaultdict(list)
+    for r in rows:
+        lg = (r.get("predictions") or {}).get("league") or "Unknown"
+        by_league[lg].append(r)
+
+    leagues = {}
+    for lg, items in by_league.items():
+        if len(items) < 5:
+            continue
+        s_ah = sum(r["actual_home"] for r in items)
+        s_aa = sum(r["actual_away"] for r in items)
+        s_ph = sum((r.get("predictions") or {}).get("predicted_home", 0) or 0 for r in items)
+        s_pa = sum((r.get("predictions") or {}).get("predicted_away", 0) or 0 for r in items)
+        leagues[lg] = {
+            "home": round(min(max(s_ah / s_ph, 0.70), 1.30), 4) if s_ph > 0 else 1.0,
+            "away": round(min(max(s_aa / s_pa, 0.70), 1.30), 4) if s_pa > 0 else 1.0,
+            "n":    len(items),
+        }
+
+    return {
+        "global":  {"home": global_home, "away": global_away, "n": len(rows)},
+        "leagues": leagues,
+    }
+
+
+async def get_bias_factors() -> dict:
+    """
+    Return cached goal-bias factors. Refreshed once per day.
+    Falls back to {home: 1.0, away: 1.0} if Supabase unavailable.
+    """
+    global _bias_cache, _bias_cache_date
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {"global": {"home": 1.0, "away": 1.0}, "leagues": {}}
+    today = date.today().isoformat()
+    if _bias_cache_date != today or not _bias_cache:
+        _bias_cache = await asyncio.to_thread(_bias_sync)
+        _bias_cache_date = today
+    return _bias_cache
+
+
 async def get_scorecard() -> dict:
     if not SUPABASE_URL or not SUPABASE_KEY:
         return {"has_data": False, "total": 0, "needed": MIN_SAMPLE, "error": "Supabase not configured"}

@@ -37,6 +37,9 @@ def _save_prediction_sync(pred: dict) -> None:
     f  = pred.get("features", {})
     mt = pred.get("match_time", "") or ""
 
+    sb  = p.get("safe_bet") or {}
+    ou  = p.get("over_under") or {}
+
     record = {
         "fixture_id":        str(pred.get("fixture_id", "")),
         "league":            pred.get("league", ""),
@@ -54,6 +57,12 @@ def _save_prediction_sync(pred: dict) -> None:
         "loss_prob":         p.get("loss_probability"),
         "confidence":        p.get("confidence"),
         "match_date":        mt[:10] if mt else date.today().isoformat(),
+        "safe_bet_line":     str(sb["line"]) if sb.get("line") is not None else None,
+        "safe_bet_prob":     sb.get("probability"),
+        "over_0_5":          ou.get("over_0_5"),
+        "over_1_5":          ou.get("over_1_5"),
+        "over_2_5":          ou.get("over_2_5"),
+        "over_3_5":          ou.get("over_3_5"),
     }
     try:
         client.table("predictions").upsert(

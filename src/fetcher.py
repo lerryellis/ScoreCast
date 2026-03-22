@@ -513,59 +513,193 @@ async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
     return matches[:n]
 
 
-def get_nba_today_scoreboard() -> list:
-    """Get today's NBA games (sync wrapper — falls back to nba_api live endpoint)."""
+# ── nba_api: team name → nba_api integer ID ───────────────────────────────────
+
+_nba_api_id_map: dict = {}
+
+
+def _nba_api_team_id(team_name: str) -> Optional[int]:
+    """Map an ESPN display name to the nba_api integer team ID."""
+    global _nba_api_id_map
+    if not _nba_api_id_map:
+        try:
+            from nba_api.stats.static import teams as _s
+            for t in _s.get_teams():
+                for key in (t["full_name"].lower(), t["nickname"].lower(), t["abbreviation"].lower()):
+                    _nba_api_id_map[key] = t["id"]
+        except Exception:
+            return None
+    name_lower = team_name.lower()
+    if name_lower in _nba_api_id_map:
+        return _nba_api_id_map[name_lower]
+    for key, tid in _nba_api_id_map.items():
+        if key and (key in name_lower or name_lower in key):
+            return tid
+    return None
+
+
+def _nba_api_fetch_team_games(team_name: str, n: int) -> list:
+    """
+    Sync: fetch last N game logs from stats.nba.com (real box score stats).
+    Returns pts, fg%, 3pt%, ft%, reb, ast, tov per game.
+    """
+    import time
+    try:
+        from nba_api.stats.endpoints import teamgamelogs
+        nba_id = _nba_api_team_id(team_name)
+        if nba_id is None:
+            return []
+        time.sleep(0.5)
+        df = teamgamelogs.TeamGameLogs(
+            team_id_nullable=str(nba_id),
+            last_n_games_nullable=n,
+        ).get_data_frames()[0]
+        results = []
+        for _, row in df.iterrows():
+            results.append({
+                "game_id":  str(row["GAME_ID"]),
+                "date":     str(row["GAME_DATE"]),
+                "is_home":  "@" not in str(row.get("MATCHUP", "")),
+                "pts_for":  int(row["PTS"]),
+                "pts_ag":   int(row["PTS"]) - int(row["PLUS_MINUS"]),
+                "fg_pct":   float(row["FG_PCT"] or 0.46),
+                "fg3_pct":  float(row["FG3_PCT"] or 0.36),
+                "ft_pct":   float(row["FT_PCT"] or 0.77),
+                "reb":      int(row["REB"] or 44),
+                "ast":      int(row["AST"] or 25),
+                "tov":      int(row["TOV"] or 14),
+            })
+        return results
+    except Exception as e:
+        print(f"[nba_api games] {team_name}: {e}")
+        return []
+
+
+async def get_espn_nba_team_stats(team_id: str) -> dict:
+    """
+    Fetch season-average stats for an NBA team from ESPN.
+    Returns {fg_pct, fg3_pct, ft_pct, avg_reb, avg_ast, avg_tov, avg_pts, avg_pts_allowed}.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{ESPN_NBA_BASE}/teams/{team_id}/statistics",
+                timeout=10,
+            )
+            if r.status_code != 200:
+                return {}
+            data = r.json()
+        cats = data.get("results", {}).get("stats", {}).get("categories", [])
+        stats: dict = {}
+        for cat in cats:
+            for s in cat.get("stats", []):
+                stats[s["name"]] = s.get("value", 0)
+        return {
+            "fg_pct":   (stats.get("fieldGoalPct", 46.0)) / 100,
+            "fg3_pct":  (stats.get("threePointFieldGoalPct", 36.0)) / 100,
+            "ft_pct":   (stats.get("freeThrowPct", 77.0)) / 100,
+            "avg_reb":  stats.get("avgRebounds", 44.0),
+            "avg_ast":  stats.get("avgAssists", 25.0),
+            "avg_tov":  stats.get("avgTurnovers", 14.0),
+            "avg_pts":  stats.get("avgPoints", 113.0),
+        }
+    except Exception:
+        return {}
+
+
+async def get_nba_team_history(espn_team_id: str, team_name: str, n: int = 10) -> list:
+    """
+    Get team game history enriched with real shooting/rebounding stats.
+    - ESPN schedule for per-game scores + dates
+    - ESPN team statistics for real fg%, reb, ast, tov (replaces hardcoded defaults)
+    - Falls back to nba_api stats if ESPN schedule returns nothing
+    """
+    games, team_stats = await asyncio.gather(
+        get_espn_nba_team_games(espn_team_id, n),
+        get_espn_nba_team_stats(espn_team_id),
+    )
+
+    if not games:
+        print(f"[NBA] ESPN returned 0 games for {team_name}, trying nba_api...")
+        return await asyncio.to_thread(_nba_api_fetch_team_games, team_name, n)
+
+    if team_stats:
+        for g in games:
+            g["fg_pct"]  = team_stats.get("fg_pct",  g["fg_pct"])
+            g["fg3_pct"] = team_stats.get("fg3_pct", g["fg3_pct"])
+            g["ft_pct"]  = team_stats.get("ft_pct",  g["ft_pct"])
+            g["reb"]     = team_stats.get("avg_reb",  g["reb"])
+            g["ast"]     = team_stats.get("avg_ast",  g["ast"])
+            g["tov"]     = team_stats.get("avg_tov",  g["tov"])
+
+    return games
+
+
+def _nba_api_live_scoreboard() -> list:
+    """Sync: fetch today's games from the NBA live data CDN via nba_api."""
     try:
         from nba_api.live.nba.endpoints import scoreboard
         sb   = scoreboard.ScoreBoard()
         data = sb.get_dict()
         games = []
         for g in data.get("scoreboard", {}).get("games", []):
+            is_final = g.get("gameStatus") == 3
+            is_live  = g.get("gameStatus") == 2
             games.append({
-                "game_id":    g["gameId"],
-                "status":     g["gameStatusText"],
-                "home_team":  g["homeTeam"]["teamName"],
-                "home_abbr":  g["homeTeam"]["teamTricode"],
-                "away_team":  g["awayTeam"]["teamName"],
-                "away_abbr":  g["awayTeam"]["teamTricode"],
-                "home_score": g["homeTeam"].get("score", 0),
-                "away_score": g["awayTeam"].get("score", 0),
+                "game_id":       g["gameId"],
+                "status":        g.get("gameStatusText", ""),
+                "is_live":       is_live,
+                "is_final":      is_final,
+                "home_team":     g["homeTeam"]["teamCity"] + " " + g["homeTeam"]["teamName"],
+                "home_abbr":     g["homeTeam"]["teamTricode"],
+                "home_team_id":  "",
+                "away_team":     g["awayTeam"]["teamCity"] + " " + g["awayTeam"]["teamName"],
+                "away_abbr":     g["awayTeam"]["teamTricode"],
+                "away_team_id":  "",
+                "home_score":    int(g["homeTeam"].get("score") or 0),
+                "away_score":    int(g["awayTeam"].get("score") or 0),
+                "home_team_logo": "",
+                "away_team_logo": "",
             })
         return games
     except Exception as e:
-        print(f"[NBA scoreboard error] {e}")
+        print(f"[nba_api live] {e}")
         return []
 
 
-def get_nba_team_last_n_games(team_id: int, n: int = 10) -> list:
-    """Kept for compatibility — stats.nba.com is unreliable; use ESPN async version instead."""
+async def get_nba_scoreboard() -> list:
+    """
+    Today's NBA games. ESPN is primary (team IDs + logos).
+    Falls back to nba_api live CDN when ESPN fails.
+    """
     try:
-        from nba_api.stats.endpoints import teamgamelogs
-        import time
-        time.sleep(0.6)
-        logs = teamgamelogs.TeamGameLogs(
-            team_id_nullable=str(team_id),
-            last_n_games_nullable=n,
-        ).get_data_frames()[0]
-        results = []
-        for _, row in logs.iterrows():
-            results.append({
-                "game_id":  row["GAME_ID"],
-                "date":     row["GAME_DATE"],
-                "is_home":  "@" not in str(row.get("MATCHUP", "")),
-                "pts_for":  row["PTS"],
-                "pts_ag":   row["PTS"] - row["PLUS_MINUS"],
-                "fg_pct":   row.get("FG_PCT", 0),
-                "fg3_pct":  row.get("FG3_PCT", 0),
-                "ft_pct":   row.get("FT_PCT", 0),
-                "reb":      row.get("REB", 0),
-                "ast":         row.get("AST", 0),
-                "tov":         row.get("TOV", 0),
-            })
-        return results
+        games = await get_espn_nba_scoreboard()
+        if games:
+            return games
     except Exception as e:
-        print(f"[NBA game logs error] {e}")
+        print(f"[ESPN NBA scoreboard] {e}")
+
+    print("[NBA] ESPN scoreboard failed, trying nba_api live...")
+    games = await asyncio.to_thread(_nba_api_live_scoreboard)
+    if not games:
         return []
+
+    # Enrich with ESPN team IDs so team history lookups work
+    try:
+        espn_map = await _get_espn_nba_teams()  # {abbr/nick lower → espn_id}
+        for g in games:
+            for key in (g["home_abbr"].lower(), g["home_team"].lower().split()[-1]):
+                if key in espn_map:
+                    g["home_team_id"] = espn_map[key]
+                    break
+            for key in (g["away_abbr"].lower(), g["away_team"].lower().split()[-1]):
+                if key in espn_map:
+                    g["away_team_id"] = espn_map[key]
+                    break
+    except Exception:
+        pass
+
+    return games
 
 
 def get_nba_all_teams() -> list:

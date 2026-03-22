@@ -16,7 +16,7 @@ from src.predictor import (
 )
 from src.fetcher import (
     get_espn_team_schedule_raw, get_espn_fixture_dates_for_month,
-    get_espn_soccer_fixtures, get_espn_nba_scoreboard,
+    get_espn_soccer_fixtures, get_espn_nba_scoreboard, get_nba_scoreboard,
     get_football_data_ht_scores, get_thesportsdb_day,
 )
 from src.config import ESPN_FOOTBALL_LEAGUES
@@ -172,7 +172,7 @@ async def live_scores():
 
     async def _nba_scores():
         try:
-            games = await get_espn_nba_scoreboard()
+            games = await get_nba_scoreboard()
             items = []
             for g in games:
                 is_live  = g.get("is_live", False)

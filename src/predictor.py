@@ -7,7 +7,7 @@ from datetime import date
 from src.fetcher import (
     get_espn_soccer_fixtures, get_espn_team_match_history, get_espn_head_to_head,
     get_espn_team_schedule_raw, get_espn_standings,
-    get_espn_nba_scoreboard, get_espn_nba_team_games,
+    get_nba_scoreboard, get_nba_team_history,
     get_football_data_ht_scores, match_ht_to_fixture,
 )
 from src.features.football import build_football_features
@@ -124,16 +124,18 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 # ─── Basketball ───────────────────────────────────────────────────────────────
 
 async def predict_basketball_game(game: dict) -> dict:
-    """Full prediction pipeline for one NBA game using ESPN data."""
-    home_id = game.get("home_team_id")
-    away_id = game.get("away_team_id")
+    """Full prediction pipeline for one NBA game. Uses ESPN + nba_api fallback."""
+    home_id   = game.get("home_team_id")
+    away_id   = game.get("away_team_id")
+    home_name = game.get("home_team", "")
+    away_name = game.get("away_team", "")
 
     async def _empty():
         return []
 
     home_games, away_games = await asyncio.gather(
-        get_espn_nba_team_games(home_id) if home_id else _empty(),
-        get_espn_nba_team_games(away_id) if away_id else _empty(),
+        get_nba_team_history(home_id, home_name) if home_id else _empty(),
+        get_nba_team_history(away_id, away_name) if away_id else _empty(),
     )
 
     # H2H: games both teams played (matching game IDs)
@@ -171,8 +173,8 @@ async def predict_basketball_game(game: dict) -> dict:
 
 
 async def get_all_basketball_predictions() -> list:
-    """Fetch today's NBA games from ESPN and predict all of them."""
-    games = await get_espn_nba_scoreboard()
+    """Fetch today's NBA games (ESPN + nba_api fallback) and predict all."""
+    games = await get_nba_scoreboard()
     if not games:
         return []
 

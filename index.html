@@ -1762,11 +1762,21 @@
                     Last meeting<br>
                     <strong>${lastH2H.home_team} ${lastH2H.home_goals}–${lastH2H.away_goals} ${lastH2H.away_team}</strong>
                   </div>` : '';
+                let sbResult = '';
+                let sbStyle = '';
+                if (m.is_final && m.home_goals != null) {
+                  const hit = (m.home_goals + m.away_goals) > parseFloat(sb.line);
+                  sbResult = hit
+                    ? `<div style="color:var(--green);font-weight:700;margin-top:4px">✓ Hit</div>`
+                    : `<div style="color:var(--red);font-weight:700;margin-top:4px">✗ Missed</div>`;
+                  sbStyle = `border-color:${hit ? 'var(--green)' : 'var(--red)'};`;
+                }
                 return `
-                <div class="safe-bet-col">
+                <div class="safe-bet-col" style="${sbStyle}">
                   <div class="safe-bet-label">SAFE BET</div>
                   <div class="safe-bet-line">Over ${sb.line}</div>
                   <div class="safe-bet-prob">${sb.probability}% probability</div>
+                  ${sbResult}
                   ${lastH2HHtml}
                 </div>`;
               })()}
@@ -1929,12 +1939,24 @@
                 <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
                 <span class="stat-chip">Total ~${p.predicted_home + p.predicted_away} pts</span>
               </div>
-              ${p.safe_bet ? `
-              <div class="safe-bet-col" style="min-width:130px">
-                <div class="safe-bet-label">SAFE BET</div>
-                <div class="safe-bet-line">Over ${p.safe_bet.line}</div>
-                <div class="safe-bet-prob">${p.safe_bet.probability}% probability</div>
-              </div>` : ''}
+              ${p.safe_bet ? (() => {
+                const bSb = p.safe_bet;
+                let sbResult = '', sbStyle = '';
+                if (m.is_final && m.home_score != null) {
+                  const hit = (m.home_score + m.away_score) > parseFloat(bSb.line);
+                  sbResult = hit
+                    ? `<div style="color:var(--green);font-weight:700;margin-top:4px">✓ Hit</div>`
+                    : `<div style="color:var(--red);font-weight:700;margin-top:4px">✗ Missed</div>`;
+                  sbStyle = `border-color:${hit ? 'var(--green)' : 'var(--red)'};`;
+                }
+                return `
+                <div class="safe-bet-col" style="min-width:130px;${sbStyle}">
+                  <div class="safe-bet-label">SAFE BET</div>
+                  <div class="safe-bet-line">Over ${bSb.line}</div>
+                  <div class="safe-bet-prob">${bSb.probability}% probability</div>
+                  ${sbResult}
+                </div>`;
+              })() : ''}
             </div>
           </div>
         </div>`;
@@ -2204,17 +2226,28 @@
                 <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
               </div>
             </div>
-            ${sb ? `
-            <div class="safe-bet-col">
+            ${sb ? (() => {
+              let sbResult = '', sbStyle = '';
+              if (m.is_final && m.home_goals != null) {
+                const hit = (m.home_goals + m.away_goals) > parseFloat(sb.line);
+                sbResult = hit
+                  ? `<div style="color:var(--green);font-weight:700;margin-top:4px">✓ Hit</div>`
+                  : `<div style="color:var(--red);font-weight:700;margin-top:4px">✗ Missed</div>`;
+                sbStyle = `border-color:${hit ? 'var(--green)' : 'var(--red)'};`;
+              }
+              return `
+            <div class="safe-bet-col" style="${sbStyle}">
               <div class="safe-bet-label">SAFE BET</div>
               <div class="safe-bet-line">Over ${sb.line}</div>
               <div class="safe-bet-prob">${sb.probability}% probability</div>
+              ${sbResult}
               ${lastH2H ? `
                 <div class="safe-bet-last-h2h">
                   Last meeting<br>
                   <strong>${lastH2H.home_team} ${lastH2H.home_goals}–${lastH2H.away_goals} ${lastH2H.away_team}</strong>
                 </div>` : ''}
-            </div>` : ''}
+            </div>`;
+            })() : ''}
           </div>
         </div>`;
     } else {
@@ -2235,17 +2268,28 @@
                 <span class="confidence-badge">🎯 ${p.confidence}% confidence</span>
               </div>
             </div>
-            ${bSb ? `
-            <div class="safe-bet-col">
+            ${bSb ? (() => {
+              let sbResult = '', sbStyle = '';
+              if (m.is_final && m.home_score != null) {
+                const hit = (m.home_score + m.away_score) > parseFloat(bSb.line);
+                sbResult = hit
+                  ? `<div style="color:var(--green);font-weight:700;margin-top:4px">✓ Hit</div>`
+                  : `<div style="color:var(--red);font-weight:700;margin-top:4px">✗ Missed</div>`;
+                sbStyle = `border-color:${hit ? 'var(--green)' : 'var(--red)'};`;
+              }
+              return `
+            <div class="safe-bet-col" style="${sbStyle}">
               <div class="safe-bet-label">SAFE BET</div>
               <div class="safe-bet-line">Over ${bSb.line}</div>
               <div class="safe-bet-prob">${bSb.probability}% probability</div>
+              ${sbResult}
               ${lastH2H ? `
                 <div class="safe-bet-last-h2h">
                   Last meeting<br>
                   <strong>${lastH2H.home_team} ${lastH2H.home_goals}–${lastH2H.away_goals} ${lastH2H.away_team}</strong>
                 </div>` : ''}
-            </div>` : ''}
+            </div>`;
+            })() : ''}
           </div>
         </div>`;
     }

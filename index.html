@@ -250,17 +250,19 @@
   /* Recent log */
   .recent-log { display:flex; flex-direction:column; gap:8px; }
   .recent-row {
-    display: flex; align-items: center; gap: 10px;
+    display: grid;
+    grid-template-columns: 64px 1fr 52px 8px 52px 90px 110px;
+    align-items: center; gap: 8px;
     background: var(--card); border: 1px solid var(--border);
     border-radius: 10px; padding: 10px 14px; font-size: 12px;
   }
-  .recent-row .rr-date  { color:var(--subtext); min-width:74px; }
-  .recent-row .rr-match { flex:1; font-weight:600; }
-  .recent-row .rr-pred  { color:var(--subtext); min-width:40px; text-align:center; }
-  .recent-row .rr-actual{ font-weight:700; min-width:40px; text-align:center; }
+  .recent-row .rr-date  { color:var(--subtext); }
+  .recent-row .rr-match { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .recent-row .rr-pred  { color:var(--subtext); text-align:center; }
+  .recent-row .rr-actual{ font-weight:700; text-align:center; }
   .recent-row .rr-badge {
     font-size:10px; font-weight:800; letter-spacing:0.4px;
-    padding:2px 7px; border-radius:5px; min-width:52px; text-align:center;
+    padding:2px 7px; border-radius:5px; text-align:center;
   }
   .rr-badge.win  { background:rgba(0,230,118,.15); color:var(--green); }
   .rr-badge.draw { background:rgba(255,215,64,.12); color:var(--yellow); }
@@ -2572,7 +2574,7 @@
           <span class="rr-date">${formatScDate(r.date)}</span>
           <span class="rr-match">${r.home_team} vs ${r.away_team}</span>
           <span class="rr-pred" title="Predicted">${r.predicted}</span>
-          <span style="color:var(--muted);font-size:11px">→</span>
+          <span style="color:var(--muted);font-size:11px;text-align:center">→</span>
           <span class="rr-actual">${r.actual}</span>
           ${correct}${sbBadge}
         </div>`;

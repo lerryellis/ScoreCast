@@ -2,8 +2,8 @@ name: Resolve Predictions
 
 on:
   schedule:
-    # Runs at 23:00 UTC daily — after all European evening games finish
-    - cron: '0 23 * * *'
+    # Every 15 mins between 13:00–22:00 UTC (covers all European kickoffs)
+    - cron: '*/15 13-22 * * *'
   workflow_dispatch:  # allow manual trigger from GitHub Actions tab
 
 jobs:

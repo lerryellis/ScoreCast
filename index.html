@@ -265,7 +265,9 @@
   .rr-badge.win  { background:rgba(0,230,118,.15); color:var(--green); }
   .rr-badge.draw { background:rgba(255,215,64,.12); color:var(--yellow); }
   .rr-badge.loss { background:rgba(255,68,68,.12);  color:var(--red); }
-  .rr-badge.exact{ background:rgba(0,212,255,.15);  color:var(--accent); }
+  .rr-badge.exact  { background:rgba(0,212,255,.15);  color:var(--accent); }
+  .rr-badge.sb-hit { background:rgba(0,230,118,.15); color:var(--green); }
+  .rr-badge.sb-miss{ background:rgba(255,68,68,.12);  color:var(--red); }
 
   .sc-pending {
     text-align:center; padding:60px 24px;
@@ -2559,6 +2561,12 @@
         : r.outcome_correct
           ? `<span class="rr-badge win">OUTCOME ✓</span>`
           : `<span class="rr-badge loss">WRONG ✗</span>`;
+      let sbBadge = '';
+      if (r.safe_bet_line != null && r.safe_bet_correct !== null && r.safe_bet_correct !== undefined) {
+        sbBadge = r.safe_bet_correct
+          ? `<span class="rr-badge sb-hit">⬆ Over ${r.safe_bet_line} ✓</span>`
+          : `<span class="rr-badge sb-miss">⬆ Over ${r.safe_bet_line} ✗</span>`;
+      }
       return `
         <div class="recent-row">
           <span class="rr-date">${formatScDate(r.date)}</span>
@@ -2566,7 +2574,7 @@
           <span class="rr-pred" title="Predicted">${r.predicted}</span>
           <span style="color:var(--muted);font-size:11px">→</span>
           <span class="rr-actual">${r.actual}</span>
-          ${correct}
+          ${correct}${sbBadge}
         </div>`;
     }).join('');
 

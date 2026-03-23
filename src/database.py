@@ -218,7 +218,7 @@ def _scorecard_sync() -> dict:
 
     rows = (
         client.table("prediction_results")
-              .select("*, predictions(league, home_team, away_team, predicted_home, predicted_away, match_date, confidence)")
+              .select("*, predictions(league, home_team, away_team, predicted_home, predicted_away, match_date, confidence, safe_bet_line, safe_bet_prob)")
               .execute()
     )
     data = rows.data or []
@@ -265,15 +265,18 @@ def _scorecard_sync() -> dict:
     for r in recent_raw:
         p = r.get("predictions") or {}
         recent.append({
-            "date":            p.get("match_date", ""),
-            "home_team":       p.get("home_team", ""),
-            "away_team":       p.get("away_team", ""),
-            "predicted":       f"{p.get('predicted_home')}-{p.get('predicted_away')}",
-            "actual":          f"{r['actual_home']}-{r['actual_away']}",
-            "outcome_correct": r["outcome_correct"],
-            "exact_correct":   r["exact_correct"],
-            "home_error":      r["home_error"],
-            "away_error":      r["away_error"],
+            "date":             p.get("match_date", ""),
+            "home_team":        p.get("home_team", ""),
+            "away_team":        p.get("away_team", ""),
+            "predicted":        f"{p.get('predicted_home')}-{p.get('predicted_away')}",
+            "actual":           f"{r['actual_home']}-{r['actual_away']}",
+            "outcome_correct":  r["outcome_correct"],
+            "exact_correct":    r["exact_correct"],
+            "home_error":       r["home_error"],
+            "away_error":       r["away_error"],
+            "safe_bet_line":    p.get("safe_bet_line"),
+            "safe_bet_prob":    p.get("safe_bet_prob"),
+            "safe_bet_correct": r.get("safe_bet_correct"),
         })
 
     return {

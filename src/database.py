@@ -68,7 +68,6 @@ def _save_prediction_sync(pred: dict) -> None:
         client.table("predictions").upsert(
             record,
             on_conflict="fixture_id,match_date",
-            ignore_duplicates=True,
         ).execute()
     except Exception as e:
         print(f"[DB save error] {e}")
@@ -234,6 +233,10 @@ def _scorecard_sync() -> dict:
     exact_ok   = sum(1 for r in data if r["exact_correct"])
     avg_err    = sum(r["home_error"] + r["away_error"] for r in data) / total / 2
 
+    sb_data    = [r for r in data if r.get("safe_bet_correct") is not None]
+    sb_hit     = sum(1 for r in sb_data if r["safe_bet_correct"])
+    sb_pct     = round(sb_hit / len(sb_data) * 100, 1) if sb_data else None
+
     # Per-league
     by_league: dict[str, list] = defaultdict(list)
     for r in data:
@@ -279,6 +282,8 @@ def _scorecard_sync() -> dict:
         "outcome_pct": round(outcome_ok / total * 100, 1),
         "exact_pct":   round(exact_ok   / total * 100, 1),
         "avg_error":   round(avg_err, 2),
+        "safe_bet_pct": sb_pct,
+        "safe_bet_total": len(sb_data),
         "leagues":     leagues,
         "recent":      recent,
     }

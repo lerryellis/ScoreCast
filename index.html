@@ -227,6 +227,7 @@
   .sc-outcome { color: var(--green); }
   .sc-exact   { color: var(--accent); }
   .sc-error   { color: var(--orange); }
+  .sc-sb      { color: #a78bfa; }
 
   .sc-section-title {
     font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
@@ -2459,6 +2460,13 @@
     }
 
     // ── Big stat cards ──
+    const sbCard = d.safe_bet_pct !== null && d.safe_bet_pct !== undefined
+      ? `<div class="scorecard-stat">
+          <div class="sc-value sc-sb">${d.safe_bet_pct}%</div>
+          <div class="sc-label">Safe Bet Hit Rate</div>
+          <div class="sc-sub">Over line correct · ${d.safe_bet_total} tracked</div>
+        </div>`
+      : '';
     const stats = `
       <div class="scorecard-grid">
         <div class="scorecard-stat">
@@ -2476,6 +2484,7 @@
           <div class="sc-label">Avg Goal Error</div>
           <div class="sc-sub">Goals off per team per game</div>
         </div>
+        ${sbCard}
       </div>
       <div style="font-size:12px;color:var(--subtext);margin-bottom:24px">Based on <strong style="color:var(--text)">${d.total}</strong> resolved predictions</div>`;
 

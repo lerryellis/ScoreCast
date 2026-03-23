@@ -1,0 +1,18 @@
+name: Resolve Predictions
+
+on:
+  schedule:
+    # Runs at 23:00 UTC daily — after all European evening games finish
+    - cron: '0 23 * * *'
+  workflow_dispatch:  # allow manual trigger from GitHub Actions tab
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run resolver
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "https://scorecast.up.railway.app/api/admin/resolve?admin_key=${{ secrets.ADMIN_KEY }}")
+          echo "Resolver response: $RESPONSE"
+          echo "$RESPONSE" | grep -q '"resolved"' || exit 1

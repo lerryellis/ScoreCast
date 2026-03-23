@@ -165,7 +165,7 @@
   }
   .pred-row {
     display: grid;
-    grid-template-columns: 1fr auto auto auto 1fr;
+    grid-template-columns: 1fr 90px 90px 200px 1fr;
     align-items: center;
     gap: 8px;
     padding: 10px 14px;
@@ -178,9 +178,10 @@
   .pred-row.correct   { border-color: rgba(0,230,118,0.35); }
   .pred-row.wrong     { border-color: rgba(255,68,68,0.25); }
   .pred-row.exact     { border-color: var(--green); background: rgba(0,230,118,0.05); }
-  .pred-row-team      { font-weight: 600; }
+  .pred-row-team      { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pred-row-team.away { text-align: right; }
-  .pred-score-block   { text-align: center; min-width: 110px; }
+  .pred-score-block   { text-align: center; }
+  .pred-badges-col    { display: flex; flex-direction: row; gap: 6px; align-items: center; flex-wrap: wrap; }
   .pred-score         { font-size: 18px; font-weight: 900; color: var(--accent); }
   .pred-score-label   { font-size: 10px; color: var(--subtext); margin-top: 1px; }
   .actual-score       { font-size: 18px; font-weight: 900; color: var(--text); }

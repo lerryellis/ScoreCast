@@ -338,6 +338,16 @@ async def predictions_day(date: str = Query(None)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/accuracy/trend")
+async def accuracy_trend():
+    """Daily + 7-day rolling accuracy stats for the performance graph."""
+    try:
+        from src.database import get_accuracy_trend
+        return await get_accuracy_trend()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/scorecard")
 async def scorecard():
     """Public accuracy scorecard — aggregated prediction vs actual stats."""

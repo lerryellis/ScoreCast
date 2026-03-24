@@ -283,6 +283,44 @@
 
   @media (max-width:640px) { .scorecard-grid { grid-template-columns:1fr; } }
 
+  /* ── Performance page ──────────────────────────────────────────────────────── */
+  .perf-summary {
+    display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px;
+  }
+  .perf-pill {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 20px; flex: 1; min-width: 140px;
+    text-align: center;
+  }
+  .perf-pill-value { font-size: 28px; font-weight: 900; line-height: 1.1; }
+  .perf-pill-label { font-size: 11px; color: var(--subtext); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .perf-pill-sub   { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .perf-chart-wrap {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 20px 24px; margin-bottom: 24px;
+  }
+  .perf-chart-header {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px; margin-bottom: 18px;
+  }
+  .perf-chart-title { font-size: 15px; font-weight: 700; color: var(--text); }
+  .perf-legend {
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    font-size: 11px; color: var(--subtext);
+  }
+  .perf-legend span { display: flex; align-items: center; gap: 5px; }
+  .legend-dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .ld-outcome   { background: #00e676; }
+  .ld-rolling   { background: #00d4ff; }
+  .ld-safebet   { background: #a78bfa; }
+  .ld-exact     { background: #ff9100; opacity: .6; }
+  .perf-chart-container { position: relative; height: 320px; }
+  .perf-table-wrap {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 20px 24px; margin-bottom: 80px;
+  }
+  .perf-na { color: var(--muted); font-size: 11px; }
+
   .nav-right { display: flex; align-items: center; gap: 14px; }
   .date-badge {
     font-size: 13px;
@@ -1106,6 +1144,9 @@
     <button type="button" class="nav-tab accuracy" onclick="switchSport('accuracy')">
       📊 <span class="label">Accuracy</span>
     </button>
+    <button type="button" class="nav-tab performance" onclick="switchSport('performance')">
+      📈 <span class="label">Performance</span>
+    </button>
   </div>
 
   <div class="nav-right">
@@ -1193,6 +1234,47 @@
     <div id="scorecardContent"><div class="sc-pending"><div class="sp-count">—</div><p>Loading scorecard…</p></div></div>
   </div>
 
+  <!-- ── Performance View ── -->
+  <div id="performanceView" class="hidden">
+    <div class="accuracy-title-row">
+      <span class="sport-icon">📈</span>
+      <div>
+        <h1>Model Performance</h1>
+        <p>How the model improves over time · Updates after every resolved game</p>
+      </div>
+    </div>
+
+    <!-- Summary pills -->
+    <div id="perfSummary" class="perf-summary"></div>
+
+    <!-- Chart -->
+    <div class="perf-chart-wrap">
+      <div class="perf-chart-header">
+        <span class="perf-chart-title">Accuracy Over Time</span>
+        <div class="perf-legend">
+          <span class="legend-dot ld-outcome"></span><span>Outcome % (daily)</span>
+          <span class="legend-dot ld-rolling"></span><span>7-day rolling</span>
+          <span class="legend-dot ld-safebet"></span><span>Safe Bet %</span>
+          <span class="legend-dot ld-exact"></span><span>Exact Score %</span>
+        </div>
+      </div>
+      <div class="perf-chart-container">
+        <canvas id="perfChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Per-day breakdown table -->
+    <div class="perf-table-wrap">
+      <div class="sc-section-title">Daily Breakdown</div>
+      <table class="league-table" id="perfTable">
+        <thead><tr>
+          <th>Date</th><th>Games</th><th>Outcome %</th><th>Exact %</th><th>Safe Bet %</th>
+        </tr></thead>
+        <tbody id="perfTableBody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ── Basketball View ── -->
   <div id="basketballView" class="hidden">
     <div class="sport-title-row">
@@ -1249,6 +1331,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
   // ── State ─────────────────────────────────────────────────────────────────
   let currentSport   = 'football';
@@ -1381,9 +1464,15 @@
     document.getElementById('footballView').classList.toggle('hidden', sport !== 'football');
     document.getElementById('basketballView').classList.toggle('hidden', sport !== 'basketball');
     document.getElementById('accuracyView').classList.toggle('hidden', sport !== 'accuracy');
+    document.getElementById('performanceView').classList.toggle('hidden', sport !== 'performance');
     if (sport === 'accuracy') {
       refreshTickerDisplay();
       loadScorecard();
+      return;
+    }
+    if (sport === 'performance') {
+      refreshTickerDisplay();
+      loadPerformance();
       return;
     }
     refreshTickerDisplay();
@@ -2662,6 +2751,189 @@
   loadLiveTicker();
   setInterval(loadPredictions, 30 * 60 * 1000);
   setInterval(loadLiveTicker, 60 * 1000);
+
+  // ── Performance page ─────────────────────────────────────────────────────────
+
+  let _perfChart = null;
+
+  async function loadPerformance() {
+    const summary = document.getElementById('perfSummary');
+    const tbody   = document.getElementById('perfTableBody');
+    summary.innerHTML = '<div class="perf-pill"><div class="perf-pill-value" style="font-size:16px;color:var(--subtext)">Loading…</div></div>';
+
+    try {
+      const res  = await fetch('/api/accuracy/trend');
+      const data = await res.json();
+      renderPerformance(data);
+    } catch(e) {
+      summary.innerHTML = '<div class="perf-pill"><div class="perf-pill-value" style="color:var(--red)">Error</div></div>';
+    }
+  }
+
+  function renderPerformance(data) {
+    const daily    = data.daily    || [];
+    const rolling7 = data.rolling7 || [];
+
+    if (!daily.length) {
+      document.getElementById('perfSummary').innerHTML =
+        '<div class="perf-pill"><div class="perf-pill-value" style="color:var(--subtext)">—</div><div class="perf-pill-label">No data yet</div></div>';
+      return;
+    }
+
+    // ── Summary pills ──
+    const last = rolling7[rolling7.length - 1] || daily[daily.length - 1];
+    const totalGames = daily.reduce((s, d) => s + d.n, 0);
+    const sbDays = daily.filter(d => d.safe_bet_pct !== null);
+    const sbAvg  = sbDays.length
+      ? Math.round(sbDays.reduce((s, d) => s + d.safe_bet_pct, 0) / sbDays.length * 10) / 10
+      : null;
+
+    const outcomeColor = last.outcome_pct >= 55 ? 'var(--green)' : last.outcome_pct >= 45 ? 'var(--yellow)' : 'var(--red)';
+    const sbColor = sbAvg !== null ? (sbAvg >= 65 ? 'var(--green)' : sbAvg >= 50 ? 'var(--yellow)' : 'var(--red)') : 'var(--subtext)';
+
+    document.getElementById('perfSummary').innerHTML = `
+      <div class="perf-pill">
+        <div class="perf-pill-value" style="color:${outcomeColor}">${last.outcome_pct}%</div>
+        <div class="perf-pill-label">Outcome Accuracy</div>
+        <div class="perf-pill-sub">7-day rolling</div>
+      </div>
+      <div class="perf-pill">
+        <div class="perf-pill-value" style="color:var(--accent)">${last.exact_pct}%</div>
+        <div class="perf-pill-label">Exact Score</div>
+        <div class="perf-pill-sub">7-day rolling</div>
+      </div>
+      <div class="perf-pill">
+        <div class="perf-pill-value" style="color:${sbColor}">${sbAvg !== null ? sbAvg + '%' : '—'}</div>
+        <div class="perf-pill-label">Safe Bet Hit Rate</div>
+        <div class="perf-pill-sub">all time average</div>
+      </div>
+      <div class="perf-pill">
+        <div class="perf-pill-value" style="color:var(--text)">${totalGames}</div>
+        <div class="perf-pill-label">Games Tracked</div>
+        <div class="perf-pill-sub">over ${daily.length} days</div>
+      </div>`;
+
+    // ── Chart ──
+    const labels   = rolling7.map(d => new Date(d.date + 'T12:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short' }));
+    const isDark   = document.documentElement.getAttribute('data-theme') !== 'light';
+    const gridCol  = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+    const textCol  = isDark ? '#718096' : '#4a5568';
+
+    const makeGradient = (ctx, color) => {
+      const g = ctx.createLinearGradient(0, 0, 0, 320);
+      g.addColorStop(0, color.replace(')', ', 0.25)').replace('rgb', 'rgba'));
+      g.addColorStop(1, color.replace(')', ', 0)').replace('rgb', 'rgba'));
+      return g;
+    };
+
+    const canvas = document.getElementById('perfChart');
+    if (_perfChart) { _perfChart.destroy(); _perfChart = null; }
+
+    const ctx = canvas.getContext('2d');
+    const g1  = ctx.createLinearGradient(0, 0, 0, 320);
+    g1.addColorStop(0, 'rgba(0,230,118,0.18)'); g1.addColorStop(1, 'rgba(0,230,118,0)');
+    const g2  = ctx.createLinearGradient(0, 0, 0, 320);
+    g2.addColorStop(0, 'rgba(167,139,250,0.15)'); g2.addColorStop(1, 'rgba(167,139,250,0)');
+
+    // Daily outcome dots (scatter overlay)
+    const dailyLabels = daily.map(d => new Date(d.date + 'T12:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short' }));
+
+    _perfChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Outcome % (7-day rolling)',
+            data: rolling7.map(d => d.outcome_pct),
+            borderColor: '#00e676',
+            backgroundColor: g1,
+            borderWidth: 2.5,
+            tension: 0.4,
+            fill: true,
+            pointRadius: 3,
+            pointBackgroundColor: '#00e676',
+          },
+          {
+            label: 'Safe Bet % (7-day rolling)',
+            data: rolling7.map(d => d.safe_bet_pct),
+            borderColor: '#a78bfa',
+            backgroundColor: g2,
+            borderWidth: 2.5,
+            tension: 0.4,
+            fill: true,
+            pointRadius: 3,
+            pointBackgroundColor: '#a78bfa',
+            spanGaps: true,
+          },
+          {
+            label: 'Exact Score % (7-day rolling)',
+            data: rolling7.map(d => d.exact_pct),
+            borderColor: '#ff9100',
+            backgroundColor: 'transparent',
+            borderWidth: 1.5,
+            borderDash: [4, 3],
+            tension: 0.4,
+            fill: false,
+            pointRadius: 2,
+            pointBackgroundColor: '#ff9100',
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: isDark ? '#141d2e' : '#ffffff',
+            borderColor: isDark ? '#1e2d45' : '#cbd5e0',
+            borderWidth: 1,
+            titleColor: isDark ? '#e2e8f0' : '#1a202c',
+            bodyColor: isDark ? '#718096' : '#4a5568',
+            padding: 12,
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                return v !== null ? ` ${ctx.dataset.label}: ${v}%` : null;
+              }
+            }
+          },
+        },
+        scales: {
+          x: {
+            grid: { color: gridCol },
+            ticks: { color: textCol, maxTicksLimit: 10, font: { size: 11 } },
+          },
+          y: {
+            min: 0, max: 100,
+            grid: { color: gridCol },
+            ticks: {
+              color: textCol, font: { size: 11 },
+              callback: v => v + '%',
+            },
+          },
+        },
+      },
+    });
+
+    // ── Daily table ──
+    const tbody = document.getElementById('perfTableBody');
+    tbody.innerHTML = [...daily].reverse().map(d => {
+      const oc = d.outcome_pct >= 55 ? 'style="color:var(--green)"' : d.outcome_pct >= 45 ? 'style="color:var(--yellow)"' : 'style="color:var(--red)"';
+      const sb = d.safe_bet_pct !== null
+        ? `<span ${d.safe_bet_pct >= 65 ? 'style="color:var(--green)"' : 'style="color:var(--red);"'}>${d.safe_bet_pct}%</span>`
+        : '<span class="perf-na">—</span>';
+      return `<tr>
+        <td>${new Date(d.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' })}</td>
+        <td>${d.n}</td>
+        <td ${oc}>${d.outcome_pct}%</td>
+        <td style="color:var(--accent)">${d.exact_pct}%</td>
+        <td>${sb}</td>
+      </tr>`;
+    }).join('');
+  }
 </script>
 
 

@@ -407,3 +407,76 @@ async def get_scorecard() -> dict:
     if not SUPABASE_URL or not SUPABASE_KEY:
         return {"has_data": False, "total": 0, "needed": MIN_SAMPLE, "error": "Supabase not configured"}
     return await asyncio.to_thread(_scorecard_sync)
+
+
+# ── Accuracy trend ─────────────────────────────────────────────────────────────
+
+def _trend_sync() -> dict:
+    """
+    Returns daily and 7-day rolling accuracy stats for the performance graph.
+    Groups resolved predictions by match_date and computes per-day metrics.
+    """
+    client = _get_client()
+    try:
+        rows = (
+            client.table("prediction_results")
+                  .select("outcome_correct, exact_correct, safe_bet_correct, predictions(match_date, league)")
+                  .execute()
+        ).data or []
+    except Exception:
+        return {"daily": [], "rolling7": []}
+
+    # Group by date
+    by_date: dict = defaultdict(list)
+    for r in rows:
+        d = (r.get("predictions") or {}).get("match_date") or ""
+        if d:
+            by_date[d].append(r)
+
+    if not by_date:
+        return {"daily": [], "rolling7": []}
+
+    sorted_dates = sorted(by_date.keys())
+
+    daily = []
+    for d in sorted_dates:
+        items = by_date[d]
+        n = len(items)
+        outcome_ok = sum(1 for r in items if r["outcome_correct"])
+        exact_ok   = sum(1 for r in items if r["exact_correct"])
+        sb_items   = [r for r in items if r.get("safe_bet_correct") is not None]
+        sb_ok      = sum(1 for r in sb_items if r["safe_bet_correct"])
+        daily.append({
+            "date":        d,
+            "n":           n,
+            "outcome_pct": round(outcome_ok / n * 100, 1),
+            "exact_pct":   round(exact_ok   / n * 100, 1),
+            "safe_bet_pct": round(sb_ok / len(sb_items) * 100, 1) if sb_items else None,
+        })
+
+    # 7-day rolling average
+    rolling7 = []
+    for i, d in enumerate(sorted_dates):
+        window = daily[max(0, i - 6): i + 1]
+        n_total = sum(w["n"] for w in window)
+        if n_total == 0:
+            continue
+        outcome_avg = round(sum(w["outcome_pct"] * w["n"] for w in window) / n_total, 1)
+        exact_avg   = round(sum(w["exact_pct"]   * w["n"] for w in window) / n_total, 1)
+        sb_window   = [w for w in window if w["safe_bet_pct"] is not None]
+        sb_n        = sum(w["n"] for w in sb_window)
+        sb_avg      = round(sum(w["safe_bet_pct"] * w["n"] for w in sb_window) / sb_n, 1) if sb_n else None
+        rolling7.append({
+            "date":        d,
+            "outcome_pct": outcome_avg,
+            "exact_pct":   exact_avg,
+            "safe_bet_pct": sb_avg,
+        })
+
+    return {"daily": daily, "rolling7": rolling7}
+
+
+async def get_accuracy_trend() -> dict:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {"daily": [], "rolling7": []}
+    return await asyncio.to_thread(_trend_sync)

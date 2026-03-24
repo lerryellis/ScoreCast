@@ -13,7 +13,7 @@ MAX_GOALS    = 8      # we model scores 0-0 to 8-8
 N_SIMULATIONS = 100_000
 
 
-def _dixon_coles_correction(home: int, away: int, lam_h: float, lam_a: float, rho: float = -0.04) -> float:
+def _dixon_coles_correction(home: int, away: int, lam_h: float, lam_a: float, rho: float = -0.04, **_) -> float:
     """
     Dixon-Coles low-score correction factor.
     Adjusts probabilities for 0-0, 1-0, 0-1, 1-1 which Poisson over/under-estimates.
@@ -31,7 +31,7 @@ def _dixon_coles_correction(home: int, away: int, lam_h: float, lam_a: float, rh
     return 1.0
 
 
-def predict_football_score(lambda_home: float, lambda_away: float) -> dict:
+def predict_football_score(lambda_home: float, lambda_away: float, rho_factor: float = 1.0) -> dict:
     """
     Given expected goals for home and away teams, returns:
     - predicted_home, predicted_away: most likely scoreline
@@ -50,7 +50,7 @@ def predict_football_score(lambda_home: float, lambda_away: float) -> dict:
     for h in goals_range:
         for a in goals_range:
             p  = poisson.pmf(h, lambda_home) * poisson.pmf(a, lambda_away)
-            p *= _dixon_coles_correction(h, a, lambda_home, lambda_away)
+            p *= _dixon_coles_correction(h, a, lambda_home, lambda_away, rho=-0.04 * rho_factor)
             prob_matrix[h][a] = p
 
     # Normalise

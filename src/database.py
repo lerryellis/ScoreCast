@@ -301,12 +301,60 @@ _bias_cache: dict = {}
 _bias_cache_date: str = ""
 
 
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return round(min(max(v, lo), hi), 4)
+
+
+def _calibrate_group(items: list) -> dict:
+    """
+    Compute all learned calibration factors for a group of resolved predictions.
+    Returns goal bias, home-advantage factor, rho factor, and avg goals.
+    """
+    n = len(items)
+
+    # ── Goal bias ──────────────────────────────────────────────────────────
+    s_ah = sum(r["actual_home"] for r in items)
+    s_aa = sum(r["actual_away"] for r in items)
+    p    = lambda r, k: (r.get("predictions") or {}).get(k, 0) or 0
+    s_ph = sum(p(r, "predicted_home") for r in items)
+    s_pa = sum(p(r, "predicted_away") for r in items)
+    home_bias = _clamp(s_ah / s_ph, 0.70, 1.30) if s_ph > 0 else 1.0
+    away_bias = _clamp(s_aa / s_pa, 0.70, 1.30) if s_pa > 0 else 1.0
+
+    # ── Home advantage: actual vs predicted home-win rate ──────────────────
+    actual_hw  = sum(1 for r in items if r["actual_home"] > r["actual_away"])
+    pred_hw    = sum(1 for r in items if p(r, "predicted_home") > p(r, "predicted_away"))
+    actual_hw_rate = actual_hw / n
+    pred_hw_rate   = pred_hw   / n
+    # Adjust HOME_ADVANTAGE_FACTOR proportionally; clamp to [0.80, 1.40]
+    home_adv_factor = _clamp(actual_hw_rate / pred_hw_rate, 0.80, 1.40) if pred_hw_rate > 0 else 1.0
+
+    # ── Draw rate: actual vs predicted (tunes Dixon-Coles rho) ─────────────
+    actual_draws = sum(1 for r in items if r["actual_home"] == r["actual_away"])
+    pred_draws   = sum(1 for r in items if p(r, "predicted_home") == p(r, "predicted_away"))
+    actual_draw_rate = actual_draws / n
+    pred_draw_rate   = pred_draws   / n
+    # rho_factor > 1 → more low-score correction needed; clamp to [0.50, 2.00]
+    rho_factor = _clamp(actual_draw_rate / pred_draw_rate, 0.50, 2.00) if pred_draw_rate > 0 else 1.0
+
+    # ── League average goals (actual observed, per team per game) ──────────
+    avg_goals = round((s_ah + s_aa) / (2 * n), 4)
+
+    return {
+        "home":             home_bias,
+        "away":             away_bias,
+        "home_adv_factor":  home_adv_factor,
+        "rho_factor":       rho_factor,
+        "avg_goals":        avg_goals,
+        "n":                n,
+    }
+
+
 def _bias_sync() -> dict:
     """
-    Compute home/away goal bias from resolved predictions.
-    bias = mean(actual) / mean(predicted)
-    A bias > 1.0 means we're under-predicting goals; < 1.0 means over-predicting.
-    Returns per-league biases where N >= 5, plus a global fallback.
+    Compute all model calibration factors from resolved predictions.
+    Learns: goal bias, home-advantage factor, rho, league avg goals.
+    Returns per-league calibration where N >= 5, plus a global fallback.
     """
     client = _get_client()
     try:
@@ -321,38 +369,21 @@ def _bias_sync() -> dict:
     if len(rows) < MIN_BIAS_SAMPLE:
         return {"global": {"home": 1.0, "away": 1.0}, "leagues": {}, "n": len(rows)}
 
-    # Global bias
-    sum_ah = sum(r["actual_home"] for r in rows)
-    sum_aa = sum(r["actual_away"] for r in rows)
-    sum_ph = sum((r.get("predictions") or {}).get("predicted_home", 0) or 0 for r in rows)
-    sum_pa = sum((r.get("predictions") or {}).get("predicted_away", 0) or 0 for r in rows)
+    # Global calibration
+    global_cal = _calibrate_group(rows)
 
-    global_home = round(min(max(sum_ah / sum_ph, 0.70), 1.30), 4) if sum_ph > 0 else 1.0
-    global_away = round(min(max(sum_aa / sum_pa, 0.70), 1.30), 4) if sum_pa > 0 else 1.0
-
-    # Per-league bias (only when N >= 5)
+    # Per-league calibration (only when N >= 5)
     from collections import defaultdict
     by_league: dict = defaultdict(list)
     for r in rows:
         lg = (r.get("predictions") or {}).get("league") or "Unknown"
         by_league[lg].append(r)
 
-    leagues = {}
-    for lg, items in by_league.items():
-        if len(items) < 5:
-            continue
-        s_ah = sum(r["actual_home"] for r in items)
-        s_aa = sum(r["actual_away"] for r in items)
-        s_ph = sum((r.get("predictions") or {}).get("predicted_home", 0) or 0 for r in items)
-        s_pa = sum((r.get("predictions") or {}).get("predicted_away", 0) or 0 for r in items)
-        leagues[lg] = {
-            "home": round(min(max(s_ah / s_ph, 0.70), 1.30), 4) if s_ph > 0 else 1.0,
-            "away": round(min(max(s_aa / s_pa, 0.70), 1.30), 4) if s_pa > 0 else 1.0,
-            "n":    len(items),
-        }
+    leagues = {lg: _calibrate_group(items)
+               for lg, items in by_league.items() if len(items) >= 5}
 
     return {
-        "global":  {"home": global_home, "away": global_away, "n": len(rows)},
+        "global":  global_cal,
         "leagues": leagues,
     }
 

@@ -41,6 +41,7 @@ def _save_prediction_sync(pred: dict) -> None:
     ou  = p.get("over_under") or {}
 
     record = {
+        "sport":             "football",
         "fixture_id":        str(pred.get("fixture_id", "")),
         "league":            pred.get("league", ""),
         "league_slug":       pred.get("league_slug", ""),
@@ -85,6 +86,100 @@ async def save_predictions(preds: list) -> None:
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
     tasks = [asyncio.create_task(save_prediction(p)) for p in preds]
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+# ── Basketball save + immediate resolve ────────────────────────────────────────
+
+def _save_basketball_sync(pred: dict) -> None:
+    """Save one basketball prediction and immediately resolve if game is final."""
+    client = _get_client()
+    try:
+        client.table("predictions").select("id").limit(1).execute()
+    except Exception:
+        return
+
+    p   = pred.get("prediction", {})
+    sb  = p.get("safe_bet") or {}
+    gd  = pred.get("match_date", "") or date.today().isoformat()
+
+    record = {
+        "sport":          "basketball",
+        "fixture_id":     str(pred.get("game_id", "")),
+        "league":         "NBA",
+        "league_slug":    "nba",
+        "home_team":      pred.get("home_team", ""),
+        "away_team":      pred.get("away_team", ""),
+        "predicted_home": p.get("predicted_home", 0),
+        "predicted_away": p.get("predicted_away", 0),
+        "win_prob":       p.get("win_probability"),
+        "loss_prob":      p.get("loss_probability"),
+        "confidence":     p.get("confidence"),
+        "match_date":     gd[:10],
+        "safe_bet_line":  str(sb["line"]) if sb.get("line") is not None else None,
+        "safe_bet_prob":  sb.get("probability"),
+    }
+    try:
+        resp = client.table("predictions").upsert(
+            record, on_conflict="fixture_id,match_date"
+        ).execute()
+    except Exception as e:
+        print(f"[DB basketball save error] {e}")
+        return
+
+    # Immediately resolve if final
+    if not pred.get("is_final") or pred.get("home_score") is None:
+        return
+
+    ah = pred["home_score"]
+    aa = pred["away_score"]
+    ph = p.get("predicted_home", 0)
+    pa = p.get("predicted_away", 0)
+
+    # Fetch the saved row id
+    try:
+        row = client.table("predictions") \
+            .select("id") \
+            .eq("fixture_id", str(pred.get("game_id", ""))) \
+            .eq("match_date", gd[:10]) \
+            .single().execute()
+        pred_id = row.data["id"]
+    except Exception:
+        return
+
+    actual_outcome = "H" if ah > aa else ("A" if aa > ah else "D")
+    pred_outcome   = "H" if ph > pa else ("A" if pa > ph else "D")
+    sb_correct     = None
+    if sb.get("line") is not None:
+        try:
+            sb_correct = (ah + aa) > float(sb["line"])
+        except (ValueError, TypeError):
+            pass
+
+    result = {
+        "prediction_id":   pred_id,
+        "fixture_id":      str(pred.get("game_id", "")),
+        "actual_home":     ah,
+        "actual_away":     aa,
+        "outcome_correct": actual_outcome == pred_outcome,
+        "exact_correct":   ah == ph and aa == pa,
+        "home_error":      abs(ah - ph),
+        "away_error":      abs(aa - pa),
+        "safe_bet_correct": sb_correct,
+    }
+    try:
+        client.table("prediction_results").upsert(
+            result, on_conflict="prediction_id", ignore_duplicates=True
+        ).execute()
+    except Exception as e:
+        print(f"[DB basketball resolve error] {e}")
+
+
+async def save_basketball_predictions(preds: list) -> None:
+    """Save and immediately resolve finished NBA games."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    tasks = [asyncio.to_thread(_save_basketball_sync, p) for p in preds]
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
@@ -206,7 +301,7 @@ async def resolve_predictions() -> int:
 MIN_SAMPLE = 30   # don't show stats until we have this many resolved predictions
 
 
-def _scorecard_sync() -> dict:
+def _scorecard_sync(sport: str = "football") -> dict:
     client = _get_client()
 
     # Gracefully handle missing tables (run supabase_schema.sql first)
@@ -218,10 +313,10 @@ def _scorecard_sync() -> dict:
 
     rows = (
         client.table("prediction_results")
-              .select("*, predictions(league, home_team, away_team, predicted_home, predicted_away, match_date, confidence, safe_bet_line, safe_bet_prob)")
+              .select("*, predictions(sport, league, home_team, away_team, predicted_home, predicted_away, match_date, confidence, safe_bet_line, safe_bet_prob)")
               .execute()
     )
-    data = rows.data or []
+    data = [r for r in (rows.data or []) if (r.get("predictions") or {}).get("sport", "football") == sport]
 
     total = len(data)
     if total == 0:
@@ -403,15 +498,15 @@ async def get_bias_factors() -> dict:
     return _bias_cache
 
 
-async def get_scorecard() -> dict:
+async def get_scorecard(sport: str = "football") -> dict:
     if not SUPABASE_URL or not SUPABASE_KEY:
         return {"has_data": False, "total": 0, "needed": MIN_SAMPLE, "error": "Supabase not configured"}
-    return await asyncio.to_thread(_scorecard_sync)
+    return await asyncio.to_thread(_scorecard_sync, sport)
 
 
 # ── Accuracy trend ─────────────────────────────────────────────────────────────
 
-def _trend_sync() -> dict:
+def _trend_sync(sport: str = "football") -> dict:
     """
     Returns daily and 7-day rolling accuracy stats for the performance graph.
     Groups resolved predictions by match_date and computes per-day metrics.
@@ -420,11 +515,13 @@ def _trend_sync() -> dict:
     try:
         rows = (
             client.table("prediction_results")
-                  .select("outcome_correct, exact_correct, safe_bet_correct, predictions(match_date, league)")
+                  .select("outcome_correct, exact_correct, safe_bet_correct, predictions(sport, match_date, league)")
                   .execute()
         ).data or []
     except Exception:
         return {"daily": [], "rolling7": []}
+
+    rows = [r for r in rows if (r.get("predictions") or {}).get("sport", "football") == sport]
 
     # Group by date
     by_date: dict = defaultdict(list)
@@ -476,7 +573,7 @@ def _trend_sync() -> dict:
     return {"daily": daily, "rolling7": rolling7}
 
 
-async def get_accuracy_trend() -> dict:
+async def get_accuracy_trend(sport: str = "football") -> dict:
     if not SUPABASE_URL or not SUPABASE_KEY:
         return {"daily": [], "rolling7": []}
-    return await asyncio.to_thread(_trend_sync)
+    return await asyncio.to_thread(_trend_sync, sport)

@@ -287,7 +287,7 @@ async def scores_by_day(
 
 
 @app.get("/api/predictions/day")
-async def predictions_day(date: str = Query(None)):
+async def predictions_day(date: str = Query(None), sport: str = Query("football")):
     """Return all predictions for a given date, with actual scores where resolved."""
     from datetime import date as _date
     from src.config import SUPABASE_URL, SUPABASE_KEY
@@ -303,6 +303,7 @@ async def predictions_day(date: str = Query(None)):
                 client.table("predictions")
                       .select("*, prediction_results(*)")
                       .eq("match_date", d)
+                      .eq("sport", sport)
                       .order("home_team")
                       .execute()
             )
@@ -339,21 +340,21 @@ async def predictions_day(date: str = Query(None)):
 
 
 @app.get("/api/accuracy/trend")
-async def accuracy_trend():
+async def accuracy_trend(sport: str = Query("football")):
     """Daily + 7-day rolling accuracy stats for the performance graph."""
     try:
         from src.database import get_accuracy_trend
-        return await get_accuracy_trend()
+        return await get_accuracy_trend(sport=sport)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/scorecard")
-async def scorecard():
+async def scorecard(sport: str = Query("football")):
     """Public accuracy scorecard — aggregated prediction vs actual stats."""
     try:
         from src.database import get_scorecard
-        data = await get_scorecard()
+        data = await get_scorecard(sport=sport)
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

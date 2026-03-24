@@ -219,6 +219,7 @@ async def predict_basketball_game(game: dict) -> dict:
 
 async def get_all_basketball_predictions(target_date: str = None) -> list:
     """Fetch NBA games (ESPN + nba_api fallback) for a given date and predict all."""
+    from datetime import date as _date
     games = await get_nba_scoreboard(target_date)
     if not games:
         return []
@@ -232,4 +233,18 @@ async def get_all_basketball_predictions(target_date: str = None) -> list:
             return None
 
     preds = await asyncio.gather(*[_safe_predict(g) for g in games])
-    return [p for p in preds if p is not None]
+    results = [p for p in preds if p is not None]
+
+    # Tag match_date and save (resolves immediately if game is final)
+    match_date = target_date or _date.today().isoformat()
+    for p in results:
+        p["match_date"] = match_date[:10]
+
+    if results:
+        try:
+            from src.database import save_basketball_predictions
+            asyncio.create_task(save_basketball_predictions(results))
+        except Exception:
+            pass
+
+    return results

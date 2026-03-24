@@ -104,7 +104,7 @@
 
   /* ── Accuracy View ── */
   #accuracyView { padding: 0 0 40px; }
-  .accuracy-title-row { display:flex; align-items:center; gap:16px; padding:32px 0 24px; }
+  .accuracy-title-row { display:flex; align-items:center; gap:16px; padding:32px 0 24px; flex-wrap:wrap; }
 
   /* ── Weekly strip ── */
   .week-strip {
@@ -282,6 +282,17 @@
   .sc-pending .sp-bar { height:8px; border-radius:6px; background:var(--yellow); transition:width 0.6s; }
 
   @media (max-width:640px) { .scorecard-grid { grid-template-columns:1fr; } }
+
+  /* ── Sport toggle (Accuracy + Performance) ─────────────────────────────────── */
+  .accuracy-title-row > div { flex:1; }
+  .sport-toggle-group { display:flex; gap:6px; flex-shrink:0; }
+  .sport-toggle-btn {
+    padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--card); color: var(--subtext);
+    cursor: pointer; transition: all 0.15s;
+  }
+  .sport-toggle-btn:hover  { border-color: var(--accent); color: var(--text); }
+  .sport-toggle-btn.active { background: var(--accent); border-color: var(--accent); color: #000; }
 
   /* ── Performance page ──────────────────────────────────────────────────────── */
   .perf-summary {
@@ -1216,7 +1227,11 @@
       <span class="sport-icon">📊</span>
       <div>
         <h1>Prediction Accuracy</h1>
-        <p>Self-correcting scorecard · Updated daily · Football predictions only</p>
+        <p>Self-correcting scorecard · Updated after every game</p>
+      </div>
+      <div class="sport-toggle-group">
+        <button type="button" class="sport-toggle-btn active" id="accSportFootball" onclick="setAccuracySport('football')">⚽ Football</button>
+        <button type="button" class="sport-toggle-btn" id="accSportBasketball" onclick="setAccuracySport('basketball')">🏀 Basketball</button>
       </div>
     </div>
 
@@ -1241,6 +1256,10 @@
       <div>
         <h1>Model Performance</h1>
         <p>How the model improves over time · Updates after every resolved game</p>
+      </div>
+      <div class="sport-toggle-group">
+        <button type="button" class="sport-toggle-btn active" id="perfSportFootball" onclick="setPerfSport('football')">⚽ Football</button>
+        <button type="button" class="sport-toggle-btn" id="perfSportBasketball" onclick="setPerfSport('basketball')">🏀 Basketball</button>
       </div>
     </div>
 
@@ -2503,7 +2522,7 @@
     const el = document.getElementById('dayPredictions');
     el.innerHTML = '<div class="day-empty">Loading…</div>';
     try {
-      const res  = await fetch(`/api/predictions/day?date=${iso}`);
+      const res  = await fetch(`/api/predictions/day?date=${iso}&sport=${_accuracySport}`);
       const data = await res.json();
       renderDayPredictions(iso, data.matches || []);
     } catch {
@@ -2576,7 +2595,7 @@
     const el = document.getElementById('scorecardContent');
     el.innerHTML = '<div class="sc-pending"><div class="sp-count">…</div><p>Loading scorecard…</p></div>';
     try {
-      const res  = await fetch('/api/scorecard');
+      const res  = await fetch(`/api/scorecard?sport=${_accuracySport}`);
       const data = await res.json();
       el.innerHTML = renderScorecard(data);
     } catch(e) {
@@ -2755,6 +2774,22 @@
   // ── Performance page ─────────────────────────────────────────────────────────
 
   let _perfChart = null;
+  let _accuracySport = 'football';
+  let _perfSport     = 'football';
+
+  function setAccuracySport(sport) {
+    _accuracySport = sport;
+    document.getElementById('accSportFootball').classList.toggle('active', sport === 'football');
+    document.getElementById('accSportBasketball').classList.toggle('active', sport === 'basketball');
+    loadScorecard();
+  }
+
+  function setPerfSport(sport) {
+    _perfSport = sport;
+    document.getElementById('perfSportFootball').classList.toggle('active', sport === 'football');
+    document.getElementById('perfSportBasketball').classList.toggle('active', sport === 'basketball');
+    loadPerformance();
+  }
 
   async function loadPerformance() {
     const summary = document.getElementById('perfSummary');
@@ -2762,7 +2797,7 @@
     summary.innerHTML = '<div class="perf-pill"><div class="perf-pill-value" style="font-size:16px;color:var(--subtext)">Loading…</div></div>';
 
     try {
-      const res  = await fetch('/api/accuracy/trend');
+      const res  = await fetch(`/api/accuracy/trend?sport=${_perfSport}`);
       const data = await res.json();
       renderPerformance(data);
     } catch(e) {

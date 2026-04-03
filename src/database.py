@@ -445,11 +445,12 @@ def _calibrate_group(items: list) -> dict:
     }
 
 
-def _bias_sync() -> dict:
+def _bias_sync(sport: str = "football") -> dict:
     """
     Compute all model calibration factors from resolved predictions.
     Learns: goal bias, home-advantage factor, rho, league avg goals.
     Returns per-league calibration where N >= 5, plus a global fallback.
+    Separated by sport — football and basketball are calibrated independently.
     """
     client = _get_client()
     try:
@@ -461,8 +462,7 @@ def _bias_sync() -> dict:
     except Exception:
         return {"global": {"home": 1.0, "away": 1.0}, "leagues": {}}
 
-    # Filter to football only — basketball scores (100+) would poison goal-based calibration
-    rows = [r for r in rows if (r.get("predictions") or {}).get("sport", "football") == "football"]
+    rows = [r for r in rows if (r.get("predictions") or {}).get("sport", "football") == sport]
 
     if len(rows) < MIN_BIAS_SAMPLE:
         return {"global": {"home": 1.0, "away": 1.0}, "leagues": {}, "n": len(rows)}
@@ -486,19 +486,21 @@ def _bias_sync() -> dict:
     }
 
 
-async def get_bias_factors() -> dict:
+async def get_bias_factors(sport: str = "football") -> dict:
     """
-    Return cached goal-bias factors. Refreshed once per day.
-    Falls back to {home: 1.0, away: 1.0} if Supabase unavailable.
+    Return cached bias factors for a specific sport. Refreshed once per day.
+    Football and basketball are cached and calibrated independently.
     """
     global _bias_cache, _bias_cache_date
     if not SUPABASE_URL or not SUPABASE_KEY:
         return {"global": {"home": 1.0, "away": 1.0}, "leagues": {}}
     today = date.today().isoformat()
     if _bias_cache_date != today or not _bias_cache:
-        _bias_cache = await asyncio.to_thread(_bias_sync)
+        _bias_cache = {}
         _bias_cache_date = today
-    return _bias_cache
+    if sport not in _bias_cache:
+        _bias_cache[sport] = await asyncio.to_thread(_bias_sync, sport)
+    return _bias_cache[sport]
 
 
 async def get_scorecard(sport: str = "football") -> dict:

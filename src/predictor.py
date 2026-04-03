@@ -154,7 +154,9 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 
 # ─── Basketball ───────────────────────────────────────────────────────────────
 
-async def predict_basketball_game(game: dict) -> dict:
+async def predict_basketball_game(game: dict,
+                                   home_bias: float = 1.0,
+                                   away_bias: float = 1.0) -> dict:
     """Full prediction pipeline for one NBA game. Uses ESPN + nba_api fallback."""
     home_id   = game.get("home_team_id")
     away_id   = game.get("away_team_id")
@@ -186,6 +188,11 @@ async def predict_basketball_game(game: dict) -> dict:
         home_games, away_games, h2h,
         game["home_team"], game["away_team"],
     )
+    # Apply bias calibration from resolved predictions
+    features["home_predicted"] = round(features["home_predicted"] * home_bias, 1)
+    features["away_predicted"] = round(features["away_predicted"] * away_bias, 1)
+    features["home_bias_applied"] = round(home_bias, 4)
+    features["away_bias_applied"] = round(away_bias, 4)
     prediction = predict_basketball_score(features)
 
     # Normalise form to same shape frontend expects
@@ -220,13 +227,22 @@ async def predict_basketball_game(game: dict) -> dict:
 async def get_all_basketball_predictions(target_date: str = None) -> list:
     """Fetch NBA games (ESPN + nba_api fallback) for a given date and predict all."""
     from datetime import date as _date
-    games = await get_nba_scoreboard(target_date)
+    from src.database import get_bias_factors
+
+    games, bias = await asyncio.gather(
+        get_nba_scoreboard(target_date),
+        get_bias_factors(sport="basketball"),
+    )
     if not games:
         return []
 
+    nba_bias   = bias.get("leagues", {}).get("NBA") or bias.get("global", {})
+    home_bias  = nba_bias.get("home", 1.0)
+    away_bias  = nba_bias.get("away", 1.0)
+
     async def _safe_predict(game):
         try:
-            return await predict_basketball_game(game)
+            return await predict_basketball_game(game, home_bias=home_bias, away_bias=away_bias)
         except Exception as e:
             print(f"[Basketball prediction error] {game.get('home_team')} vs "
                   f"{game.get('away_team')}: {e}")

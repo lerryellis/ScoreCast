@@ -455,11 +455,14 @@ def _bias_sync() -> dict:
     try:
         rows = (
             client.table("prediction_results")
-                  .select("actual_home, actual_away, prediction_id, predictions(predicted_home, predicted_away, league)")
+                  .select("actual_home, actual_away, prediction_id, predictions(predicted_home, predicted_away, league, sport)")
                   .execute()
         ).data or []
     except Exception:
         return {"global": {"home": 1.0, "away": 1.0}, "leagues": {}}
+
+    # Filter to football only — basketball scores (100+) would poison goal-based calibration
+    rows = [r for r in rows if (r.get("predictions") or {}).get("sport", "football") == "football"]
 
     if len(rows) < MIN_BIAS_SAMPLE:
         return {"global": {"home": 1.0, "away": 1.0}, "leagues": {}, "n": len(rows)}

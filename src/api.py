@@ -12,6 +12,7 @@ import asyncio
 from src.predictor import (
     get_all_football_predictions,
     get_all_basketball_predictions,
+    get_all_international_predictions,
     predict_football_fixture,
 )
 from src.fetcher import (
@@ -20,7 +21,7 @@ from src.fetcher import (
     get_football_data_ht_scores, get_thesportsdb_day,
     get_espn_nba_dates_for_month, get_espn_nba_full_team_schedule,
 )
-from src.config import ESPN_FOOTBALL_LEAGUES
+from src.config import ESPN_FOOTBALL_LEAGUES, ESPN_INTERNATIONAL_LEAGUES
 
 app = FastAPI(title="ScoreCast", version="1.0.0")
 
@@ -39,7 +40,10 @@ async def root():
 
 @app.get("/api/leagues")
 async def list_leagues():
-    return {"leagues": list(ESPN_FOOTBALL_LEAGUES.keys())}
+    return {
+        "leagues": list(ESPN_FOOTBALL_LEAGUES.keys()),
+        "international": list(ESPN_INTERNATIONAL_LEAGUES.keys()),
+    }
 
 
 @app.get("/api/predictions/football")
@@ -53,6 +57,45 @@ async def football_predictions(
             target_date=date,
         )
         return {"sport": "football", "league": league, "matches": predictions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/international-leagues")
+async def list_international_leagues():
+    return {"leagues": list(ESPN_INTERNATIONAL_LEAGUES.keys())}
+
+
+@app.get("/api/predictions/international")
+async def international_predictions(
+    league: str = Query("World Cup 2026"),
+    date:   str = Query(None),
+):
+    try:
+        predictions = await get_all_international_predictions(
+            league_name=league, target_date=date,
+        )
+        return {"sport": "international", "league": league, "matches": predictions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/international/fixture-dates")
+async def intl_fixture_dates(
+    league: str = Query("World Cup 2026"),
+    year:  int = Query(None),
+    month: int = Query(None),
+):
+    from datetime import date as _date
+    slug = ESPN_INTERNATIONAL_LEAGUES.get(league)
+    if not slug:
+        return {"dates": []}
+    today = _date.today()
+    y = year or today.year
+    m = month or today.month
+    try:
+        dates = await get_espn_fixture_dates_for_month(slug, y, m)
+        return {"year": y, "month": m, "dates": dates}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -7,14 +7,16 @@ from datetime import date
 from src.fetcher import (
     get_espn_soccer_fixtures, get_espn_team_match_history, get_espn_team_all_matches,
     get_espn_head_to_head, get_espn_team_schedule_raw, get_espn_standings,
+    get_intl_team_all_matches, get_intl_head_to_head,
     get_nba_scoreboard, get_nba_team_history,
     get_football_data_ht_scores, match_ht_to_fixture,
 )
 from src.features.football import build_football_features
+from src.features.international import build_international_features
 from src.features.basketball import build_basketball_features
 from src.models.football_model import predict_football_score
 from src.models.basketball_model import predict_basketball_score
-from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES
+from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES, ESPN_INTERNATIONAL_LEAGUES
 
 
 # ─── Football ─────────────────────────────────────────────────────────────────
@@ -136,6 +138,104 @@ async def get_all_football_predictions(league_name: str = "Premier League",
                   f"{fixture.get('away_team')}: {e}")
 
     # Save predictions to Supabase (fire-and-forget)
+    if results:
+        try:
+            from src.database import save_predictions
+            asyncio.create_task(save_predictions(results))
+        except Exception:
+            pass
+
+    return results
+
+
+# ─── International Football ──────────────────────────────────────────────────
+
+async def predict_international_fixture(fixture: dict,
+                                         home_bias: float = 1.0,
+                                         away_bias: float = 1.0) -> dict:
+    """Full prediction pipeline for one international football fixture."""
+    home_id = fixture["home_team_id"]
+    away_id = fixture["away_team_id"]
+
+    home_matches, away_matches, h2h = await asyncio.gather(
+        get_intl_team_all_matches(home_id, n=20),
+        get_intl_team_all_matches(away_id, n=20),
+        get_intl_head_to_head(home_id, away_id),
+    )
+
+    features = build_international_features(
+        home_matches, away_matches, h2h,
+        fixture["home_team"], fixture["away_team"],
+    )
+
+    calibrated_lh = features["lambda_home"] * home_bias
+    calibrated_la = features["lambda_away"] * away_bias
+    features["lambda_home"] = round(calibrated_lh, 4)
+    features["lambda_away"] = round(calibrated_la, 4)
+    features["home_bias_applied"] = round(home_bias, 4)
+    features["away_bias_applied"] = round(away_bias, 4)
+    prediction = predict_football_score(calibrated_lh, calibrated_la)
+
+    return {
+        "sport":          "international",
+        "fixture_id":     fixture["fixture_id"],
+        "home_team":      fixture["home_team"],
+        "home_team_id":   fixture["home_team_id"],
+        "home_team_logo": fixture.get("home_team_logo", ""),
+        "away_team":      fixture["away_team"],
+        "away_team_id":   fixture["away_team_id"],
+        "away_team_logo": fixture.get("away_team_logo", ""),
+        "league":         fixture.get("league", ""),
+        "league_slug":    fixture.get("league_slug", ""),
+        "match_time":     fixture.get("date", ""),
+        "venue":          fixture.get("venue", ""),
+        "status":         fixture.get("status", ""),
+        "is_live":        fixture.get("is_live", False),
+        "is_final":       fixture.get("is_final", False),
+        "home_goals":     fixture.get("home_goals"),
+        "away_goals":     fixture.get("away_goals"),
+        "prediction":     prediction,
+        "features":       features,
+        "home_form":      [{"date": m["date"], "goals_for": m["goals_for"],
+                           "goals_ag": m["goals_ag"], "is_home": m["is_home"]}
+                          for m in home_matches[:5]],
+        "away_form":      [{"date": m["date"], "goals_for": m["goals_for"],
+                           "goals_ag": m["goals_ag"], "is_home": m["is_home"]}
+                          for m in away_matches[:5]],
+        "h2h":            h2h[:5],
+    }
+
+
+async def get_all_international_predictions(league_name: str = "World Cup 2026",
+                                             target_date: str = None) -> list:
+    """Fetch fixtures for an international competition and predict all."""
+    from datetime import date as _date
+    from src.database import get_bias_factors
+
+    league_slug = ESPN_INTERNATIONAL_LEAGUES.get(league_name)
+    if not league_slug:
+        return []
+
+    fixtures, bias = await asyncio.gather(
+        get_espn_soccer_fixtures(league_slug, target_date),
+        get_bias_factors(sport="international"),
+    )
+
+    intl_bias  = bias.get("global", {})
+    home_bias  = intl_bias.get("home", 1.0)
+    away_bias  = intl_bias.get("away", 1.0)
+
+    results = []
+    for fixture in fixtures:
+        try:
+            pred = await predict_international_fixture(
+                fixture, home_bias=home_bias, away_bias=away_bias,
+            )
+            results.append(pred)
+        except Exception as e:
+            print(f"[Intl prediction error] {fixture.get('home_team')} vs "
+                  f"{fixture.get('away_team')}: {e}")
+
     if results:
         try:
             from src.database import save_predictions

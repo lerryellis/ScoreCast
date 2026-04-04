@@ -235,6 +235,89 @@ async def get_espn_team_all_matches(team_id: str, league_slug: str, n: int = 20)
     return unique[:n]
 
 
+async def get_intl_team_all_matches(team_id: str, n: int = 20) -> list:
+    """
+    Fetch completed matches for a national team across ALL international competitions.
+    Checks World Cup, qualifiers, Nations League, friendlies.
+    """
+    from src.config import INTERNATIONAL_COMP_SLUGS
+
+    tasks = [get_espn_team_schedule_raw(team_id, slug) for slug in INTERNATIONAL_COMP_SLUGS]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    all_matches = []
+    for slug, result in zip(INTERNATIONAL_COMP_SLUGS, results):
+        if isinstance(result, Exception):
+            continue
+        all_matches.extend(_parse_events(result, team_id, comp_tag=slug))
+
+    seen = set()
+    unique = []
+    for m in all_matches:
+        if m["fixture_id"] not in seen:
+            seen.add(m["fixture_id"])
+            unique.append(m)
+
+    unique.sort(key=lambda x: x["date"], reverse=True)
+    return unique[:n]
+
+
+async def get_intl_head_to_head(home_id: str, away_id: str, last: int = 5) -> list:
+    """Find H2H results between two national teams across all international competitions."""
+    from src.config import INTERNATIONAL_COMP_SLUGS
+
+    home_tasks = [get_espn_team_schedule_raw(home_id, slug) for slug in INTERNATIONAL_COMP_SLUGS]
+    away_tasks = [get_espn_team_schedule_raw(away_id, slug) for slug in INTERNATIONAL_COMP_SLUGS]
+    all_results = await asyncio.gather(*(home_tasks + away_tasks), return_exceptions=True)
+
+    home_results = all_results[:len(INTERNATIONAL_COMP_SLUGS)]
+    away_results = all_results[len(INTERNATIONAL_COMP_SLUGS):]
+
+    away_event_ids = set()
+    for result in away_results:
+        if isinstance(result, Exception):
+            continue
+        for event in result:
+            away_event_ids.add(event["id"])
+
+    h2h = []
+    for result in home_results:
+        if isinstance(result, Exception):
+            continue
+        for event in result:
+            if event["id"] not in away_event_ids:
+                continue
+            comp = event["competitions"][0]
+            if not comp.get("status", {}).get("type", {}).get("completed", False):
+                continue
+            competitors = comp["competitors"]
+            home_c = next((c for c in competitors if c["id"] == str(home_id)), None)
+            away_c = next((c for c in competitors if c["id"] == str(away_id)), None)
+            if not home_c or not away_c:
+                continue
+            hs = home_c.get("score", {})
+            as_ = away_c.get("score", {})
+            hg = hs.get("value") if isinstance(hs, dict) else hs
+            ag = as_.get("value") if isinstance(as_, dict) else as_
+            if hg is None or ag is None:
+                continue
+            h2h.append({
+                "home_team": home_c["team"]["displayName"],
+                "away_team": away_c["team"]["displayName"],
+                "home_goals": int(hg),
+                "away_goals": int(ag),
+                "date": event["date"],
+                "fixture_home_at_home": home_c["homeAway"] == "home",
+            })
+            if len(h2h) >= last:
+                break
+        if len(h2h) >= last:
+            break
+
+    h2h.sort(key=lambda x: x["date"], reverse=True)
+    return h2h[:last]
+
+
 async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, last: int = 5) -> list:
     """
     Find H2H results across multiple seasons until we have `last` meetings.

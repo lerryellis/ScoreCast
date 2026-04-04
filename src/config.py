@@ -60,6 +60,19 @@ ESPN_CUP_SLUGS = {
     "gha.1":  [],
 }
 
+# ESPN international football slugs — standalone from club football
+ESPN_INTERNATIONAL_LEAGUES = {
+    "World Cup 2026":           "fifa.world",
+    "UEFA WC Qualifiers":       "fifa.worldq.uefa",
+    "CONMEBOL WC Qualifiers":   "fifa.worldq.conmebol",
+    "CAF WC Qualifiers":        "fifa.worldq.caf",
+    "UEFA Nations League":      "uefa.nations",
+    "International Friendlies": "fifa.friendly",
+}
+
+# All international slugs — used to build full match history for a national team
+INTERNATIONAL_COMP_SLUGS = list(ESPN_INTERNATIONAL_LEAGUES.values())
+
 # NBA is the only basketball league for now
 BASKETBALL_LEAGUE = "NBA"
 

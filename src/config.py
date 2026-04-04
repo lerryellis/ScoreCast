@@ -44,6 +44,12 @@ ESPN_FOOTBALL_LEAGUES = {
     "Ligue 1":              "fra.1",
     "Champions League":     "UEFA.CHAMPIONS",
     "Europa League":        "UEFA.EUROPA",
+    "FA Cup":               "eng.fa",
+    "EFL Cup":              "eng.league_cup",
+    "Copa del Rey":         "esp.copa_del_rey",
+    "Coppa Italia":         "ita.coppa_italia",
+    "DFB Pokal":            "ger.dfb_pokal",
+    "Coupe de France":      "fra.coupe_de_france",
     "Ghana Premier League": "gha.1",
 }
 

@@ -2859,10 +2859,10 @@
       ? _tickerScores.filter(s => s.sport === 'basketball')
       : [];
     const all = [...football, ...extra];
-    const live  = all.filter(s => s.is_live);
-    const final = all.filter(s => s.is_final);
-    _fillTrack(document.getElementById('tickerTrackLive'),  live,  'No live games right now');
-    _fillTrack(document.getElementById('tickerTrackFinal'), final, 'No results yet today');
+    const liveGames  = all.filter(s => s.is_live);
+    const finalGames = all.filter(s => s.is_final);
+    _fillTrack(document.getElementById('tickerTrackLive'),  liveGames,  'No live games right now');
+    _fillTrack(document.getElementById('tickerTrackFinal'), finalGames, 'No results yet today');
   }
 
   async function loadLiveTicker() {

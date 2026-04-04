@@ -21,8 +21,6 @@ from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES
 
 async def predict_football_fixture(fixture: dict, standings: dict = None,
                                     home_bias: float = 1.0, away_bias: float = 1.0,
-                                    home_adv_factor: float = 1.0, rho_factor: float = 1.0,
-                                    league_avg_goals: float = None,
                                     **_) -> dict:
     """Full prediction pipeline for one football fixture."""
     home_id     = fixture["home_team_id"]
@@ -43,19 +41,16 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
         home_matches, away_matches, h2h,
         fixture["home_team"], fixture["away_team"],
         home_rank=home_rank, away_rank=away_rank,
-        home_adv_factor=home_adv_factor,
-        league_avg_goals=league_avg_goals,
     )
     # Apply goal bias calibration from historical prediction errors
+    # This single multiplier captures all systematic over/under-prediction
     calibrated_lh = features["lambda_home"] * home_bias
     calibrated_la = features["lambda_away"] * away_bias
     features["lambda_home"] = round(calibrated_lh, 4)
     features["lambda_away"] = round(calibrated_la, 4)
     features["home_bias_applied"]    = round(home_bias, 4)
     features["away_bias_applied"]    = round(away_bias, 4)
-    features["home_adv_applied"]     = round(home_adv_factor, 4)
-    features["rho_factor_applied"]   = round(rho_factor, 4)
-    prediction = predict_football_score(calibrated_lh, calibrated_la, rho_factor=rho_factor)
+    prediction = predict_football_score(calibrated_lh, calibrated_la)
 
     return {
         "sport":         "football",
@@ -106,11 +101,8 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 
     # Pick league-specific calibration if available, else global
     league_bias = bias.get("leagues", {}).get(league_name) or bias.get("global", {})
-    home_bias        = league_bias.get("home", 1.0)
-    away_bias        = league_bias.get("away", 1.0)
-    home_adv_factor  = league_bias.get("home_adv_factor", 1.0)
-    rho_factor       = league_bias.get("rho_factor", 1.0)
-    league_avg_goals = league_bias.get("avg_goals", None)
+    home_bias   = league_bias.get("home", 1.0)
+    away_bias   = league_bias.get("away", 1.0)
 
     results = []
     for fixture in fixtures:
@@ -118,9 +110,6 @@ async def get_all_football_predictions(league_name: str = "Premier League",
             pred = await predict_football_fixture(
                 fixture, standings=standings,
                 home_bias=home_bias, away_bias=away_bias,
-                home_adv_factor=home_adv_factor,
-                rho_factor=rho_factor,
-                league_avg_goals=league_avg_goals,
             )
 
             # Enrich with HT scores from football-data.org (better source than ESPN)

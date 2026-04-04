@@ -121,18 +121,16 @@ def _weighted_avg(matches_all: list, key: str, w5: float = 0.5, w10: float = 0.5
 
 # ── Main feature builder ──────────────────────────────────────────────────────
 def build_football_features(
-    home_matches:      list,
-    away_matches:      list,
-    h2h:               list,
-    home_team_name:    str,
-    away_team_name:    str,
-    home_injuries:     list  = None,
-    away_injuries:     list  = None,
-    home_rank:         int   = 0,
-    away_rank:         int   = 0,
-    total_teams:       int   = TOTAL_TEAMS,
-    home_adv_factor:   float = None,   # learned from resolved predictions
-    league_avg_goals:  float = None,   # learned from resolved predictions
+    home_matches:   list,
+    away_matches:   list,
+    h2h:            list,
+    home_team_name: str,
+    away_team_name: str,
+    home_injuries:  list = None,
+    away_injuries:  list = None,
+    home_rank:      int  = 0,
+    away_rank:      int  = 0,
+    total_teams:    int  = TOTAL_TEAMS,
 ) -> dict:
     """
     Returns a feature dict consumed by the football prediction model.
@@ -140,8 +138,6 @@ def build_football_features(
     """
     home_injuries = home_injuries or []
     away_injuries = away_injuries or []
-    effective_haf  = (HOME_ADVANTAGE_FACTOR * home_adv_factor) if home_adv_factor else HOME_ADVANTAGE_FACTOR
-    effective_lag  = league_avg_goals if league_avg_goals else LEAGUE_AVG_GOALS
 
     # ── 1. Venue-split form ───────────────────────────────────────────────
     MIN_VENUE = 3
@@ -163,10 +159,10 @@ def build_football_features(
     away_avg_conceded = away_avg_conceded or LEAGUE_AVG_GOALS
 
     # ── 2. Strength ratings ───────────────────────────────────────────────
-    home_attack  = home_avg_scored   / effective_lag
-    home_defence = home_avg_conceded / effective_lag
-    away_attack  = away_avg_scored   / effective_lag
-    away_defence = away_avg_conceded / effective_lag
+    home_attack  = home_avg_scored   / LEAGUE_AVG_GOALS
+    home_defence = home_avg_conceded / LEAGUE_AVG_GOALS
+    away_attack  = away_avg_scored   / LEAGUE_AVG_GOALS
+    away_defence = away_avg_conceded / LEAGUE_AVG_GOALS
 
     # ── 3. Momentum (PPG last 5 — all games, not venue-split) ─────────────
     home_ppg        = _ppg(home_matches, 5)
@@ -210,14 +206,14 @@ def build_football_features(
 
     # ── 10. Expected goals (λ) ────────────────────────────────────────────
     lambda_home = (
-        home_attack * away_defence * effective_lag
-        * effective_haf
+        home_attack * away_defence * LEAGUE_AVG_GOALS
+        * HOME_ADVANTAGE_FACTOR
         * home_rest * home_inj * home_momentum
         * home_congestion * home_motivation
         * away_cs_factor
     )
     lambda_away = (
-        away_attack * home_defence * effective_lag
+        away_attack * home_defence * LEAGUE_AVG_GOALS
         * away_rest * away_inj * away_momentum
         * away_congestion * away_motivation
         * home_cs_factor

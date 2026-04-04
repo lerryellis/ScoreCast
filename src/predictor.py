@@ -5,8 +5,8 @@ Orchestrator — given a fixture, pulls all data, builds features, runs model.
 import asyncio
 from datetime import date
 from src.fetcher import (
-    get_espn_soccer_fixtures, get_espn_team_match_history, get_espn_head_to_head,
-    get_espn_team_schedule_raw, get_espn_standings,
+    get_espn_soccer_fixtures, get_espn_team_match_history, get_espn_team_all_matches,
+    get_espn_head_to_head, get_espn_team_schedule_raw, get_espn_standings,
     get_nba_scoreboard, get_nba_team_history,
     get_football_data_ht_scores, match_ht_to_fixture,
 )
@@ -27,9 +27,13 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
     away_id     = fixture["away_team_id"]
     league_slug = fixture.get("league_slug", "eng.1")
 
-    home_matches, away_matches, h2h = await asyncio.gather(
+    # League matches for form/attack/defence ratings
+    # All-competition matches for rest/congestion (includes cups)
+    home_matches, away_matches, home_all, away_all, h2h = await asyncio.gather(
         get_espn_team_match_history(home_id, league_slug, n=38),
         get_espn_team_match_history(away_id, league_slug, n=38),
+        get_espn_team_all_matches(home_id, league_slug, n=20),
+        get_espn_team_all_matches(away_id, league_slug, n=20),
         get_espn_head_to_head(home_id, away_id, league_slug),
     )
 
@@ -41,6 +45,7 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
         home_matches, away_matches, h2h,
         fixture["home_team"], fixture["away_team"],
         home_rank=home_rank, away_rank=away_rank,
+        home_all_matches=home_all, away_all_matches=away_all,
     )
     # Apply goal bias calibration from historical prediction errors
     # This single multiplier captures all systematic over/under-prediction

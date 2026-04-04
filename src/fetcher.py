@@ -164,10 +164,8 @@ async def get_espn_team_schedule_raw(team_id: str, league_slug: str, season: int
     return data.get("events", [])
 
 
-async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 10) -> list:
-    """Fetch last N completed matches for a team from ESPN."""
-    events = await get_espn_team_schedule_raw(team_id, league_slug)
-
+def _parse_events(events: list, team_id: str, comp_tag: str = "league") -> list:
+    """Parse ESPN event list into match dicts for a given team."""
     matches = []
     for event in events:
         comp = event["competitions"][0]
@@ -191,10 +189,50 @@ async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 1
             "goals_for":   int(goals_for),
             "goals_ag":    int(goals_ag),
             "opponent_id": opp["id"],
+            "comp":        comp_tag,
         })
+    return matches
 
+
+async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 10) -> list:
+    """Fetch last N completed league matches for a team from ESPN."""
+    events = await get_espn_team_schedule_raw(team_id, league_slug)
+    matches = _parse_events(events, team_id, comp_tag="league")
     matches.sort(key=lambda x: x["date"], reverse=True)
     return matches[:n]
+
+
+async def get_espn_team_all_matches(team_id: str, league_slug: str, n: int = 20) -> list:
+    """
+    Fetch completed matches across ALL competitions (league + cups).
+    Used for rest/congestion calculations so we know the true last match date.
+    """
+    from src.config import ESPN_CUP_SLUGS
+    cup_slugs = ESPN_CUP_SLUGS.get(league_slug, [])
+
+    tasks = [get_espn_team_schedule_raw(team_id, league_slug)]
+    for slug in cup_slugs:
+        tasks.append(get_espn_team_schedule_raw(team_id, slug))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    all_matches = []
+    tags = ["league"] + cup_slugs
+    for tag, result in zip(tags, results):
+        if isinstance(result, Exception):
+            continue
+        all_matches.extend(_parse_events(result, team_id, comp_tag=tag))
+
+    # Deduplicate by fixture_id (some matches might appear in multiple feeds)
+    seen = set()
+    unique = []
+    for m in all_matches:
+        if m["fixture_id"] not in seen:
+            seen.add(m["fixture_id"])
+            unique.append(m)
+
+    unique.sort(key=lambda x: x["date"], reverse=True)
+    return unique[:n]
 
 
 async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, last: int = 5) -> list:

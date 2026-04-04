@@ -121,16 +121,18 @@ def _weighted_avg(matches_all: list, key: str, w5: float = 0.5, w10: float = 0.5
 
 # ── Main feature builder ──────────────────────────────────────────────────────
 def build_football_features(
-    home_matches:   list,
-    away_matches:   list,
-    h2h:            list,
-    home_team_name: str,
-    away_team_name: str,
-    home_injuries:  list = None,
-    away_injuries:  list = None,
-    home_rank:      int  = 0,
-    away_rank:      int  = 0,
-    total_teams:    int  = TOTAL_TEAMS,
+    home_matches:      list,
+    away_matches:      list,
+    h2h:               list,
+    home_team_name:    str,
+    away_team_name:    str,
+    home_injuries:     list = None,
+    away_injuries:     list = None,
+    home_rank:         int  = 0,
+    away_rank:         int  = 0,
+    total_teams:       int  = TOTAL_TEAMS,
+    home_all_matches:  list = None,
+    away_all_matches:  list = None,
 ) -> dict:
     """
     Returns a feature dict consumed by the football prediction model.
@@ -177,15 +179,17 @@ def build_football_features(
     home_cs_factor  = 1.0 - max(0, home_cs_rate - 0.3) * 0.15
     away_cs_factor  = 1.0 - max(0, away_cs_rate - 0.3) * 0.15
 
-    # ── 5. Fixture congestion ─────────────────────────────────────────────
-    home_dates       = [m["date"] for m in home_matches]
-    away_dates       = [m["date"] for m in away_matches]
-    home_congestion  = _congestion_factor(home_dates)
-    away_congestion  = _congestion_factor(away_dates)
+    # ── 5. Fixture congestion (all competitions — cups count!) ─────────
+    home_all = home_all_matches or home_matches
+    away_all = away_all_matches or away_matches
+    home_all_dates   = [m["date"] for m in home_all]
+    away_all_dates   = [m["date"] for m in away_all]
+    home_congestion  = _congestion_factor(home_all_dates)
+    away_congestion  = _congestion_factor(away_all_dates)
 
-    # ── 6. Rest / fatigue ────────────────────────────────────────────────
-    home_rest        = rest_factor(days_since_last_match(home_dates))
-    away_rest        = rest_factor(days_since_last_match(away_dates))
+    # ── 6. Rest / fatigue (all competitions — midweek cup = short rest)
+    home_rest        = rest_factor(days_since_last_match(home_all_dates))
+    away_rest        = rest_factor(days_since_last_match(away_all_dates))
 
     # ── 7. Injury impact ─────────────────────────────────────────────────
     home_inj         = injury_impact_factor(home_injuries)

@@ -47,6 +47,19 @@ ESPN_FOOTBALL_LEAGUES = {
     "Ghana Premier League": "gha.1",
 }
 
+# Cup competitions per country — used to fetch full schedule for rest/congestion
+ESPN_CUP_SLUGS = {
+    "eng.1":  ["eng.fa", "eng.league_cup", "UEFA.CHAMPIONS", "UEFA.EUROPA"],
+    "eng.2":  ["eng.fa", "eng.league_cup"],
+    "esp.1":  ["esp.copa_del_rey", "UEFA.CHAMPIONS", "UEFA.EUROPA"],
+    "ita.1":  ["ita.coppa_italia", "UEFA.CHAMPIONS", "UEFA.EUROPA"],
+    "ger.1":  ["ger.dfb_pokal", "UEFA.CHAMPIONS", "UEFA.EUROPA"],
+    "fra.1":  ["fra.coupe_de_france", "UEFA.CHAMPIONS", "UEFA.EUROPA"],
+    "UEFA.CHAMPIONS": [],  # already a cup competition
+    "UEFA.EUROPA":    [],
+    "gha.1":  [],
+}
+
 # NBA is the only basketball league for now
 BASKETBALL_LEAGUE = "NBA"
 

@@ -2853,11 +2853,14 @@
   }
 
   function refreshTickerDisplay() {
-    // Accuracy/performance/international tabs show football ticker
-    const sport = (['accuracy','performance','international'].includes(currentSport)) ? 'football' : currentSport;
-    const filtered = _tickerScores.filter(s => s.sport === sport);
-    const live  = filtered.filter(s => s.is_live);
-    const final = filtered.filter(s => s.is_final);
+    // Football live scores always show; basketball added when on basketball tab
+    const football = _tickerScores.filter(s => s.sport === 'football');
+    const extra = (currentSport === 'basketball')
+      ? _tickerScores.filter(s => s.sport === 'basketball')
+      : [];
+    const all = [...football, ...extra];
+    const live  = all.filter(s => s.is_live);
+    const final = all.filter(s => s.is_final);
     _fillTrack(document.getElementById('tickerTrackLive'),  live,  'No live games right now');
     _fillTrack(document.getElementById('tickerTrackFinal'), final, 'No results yet today');
   }

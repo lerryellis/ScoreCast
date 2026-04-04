@@ -296,6 +296,7 @@ async def live_scores():
             return []
 
     tasks = [_football_scores(name, slug) for name, slug in ESPN_FOOTBALL_LEAGUES.items()]
+    tasks += [_football_scores(name, slug) for name, slug in ESPN_INTERNATIONAL_LEAGUES.items()]
     tasks.append(_nba_scores())
     results = await asyncio.gather(*tasks)
     scores = [item for group in results for item in group]

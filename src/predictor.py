@@ -16,7 +16,7 @@ from src.features.international import build_international_features
 from src.features.basketball import build_basketball_features
 from src.models.football_model import predict_football_score
 from src.models.basketball_model import predict_basketball_score
-from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES, ESPN_INTERNATIONAL_LEAGUES
+from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES, ESPN_INTERNATIONAL_LEAGUES, CUP_TO_LEAGUE
 
 
 # ─── Football ─────────────────────────────────────────────────────────────────
@@ -29,13 +29,16 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
     away_id     = fixture["away_team_id"]
     league_slug = fixture.get("league_slug", "eng.1")
 
+    # For cup competitions, use parent league for form data (cup scorelines are unreliable)
+    form_slug = CUP_TO_LEAGUE.get(league_slug, league_slug)
+
     # League matches for form/attack/defence ratings
     # All-competition matches for rest/congestion (includes cups)
     home_matches, away_matches, home_all, away_all, h2h = await asyncio.gather(
-        get_espn_team_match_history(home_id, league_slug, n=38),
-        get_espn_team_match_history(away_id, league_slug, n=38),
-        get_espn_team_all_matches(home_id, league_slug, n=20),
-        get_espn_team_all_matches(away_id, league_slug, n=20),
+        get_espn_team_match_history(home_id, form_slug, n=38),
+        get_espn_team_match_history(away_id, form_slug, n=38),
+        get_espn_team_all_matches(home_id, form_slug, n=20),
+        get_espn_team_all_matches(away_id, form_slug, n=20),
         get_espn_head_to_head(home_id, away_id, league_slug),
     )
 

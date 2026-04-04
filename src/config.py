@@ -53,6 +53,16 @@ ESPN_FOOTBALL_LEAGUES = {
     "Ghana Premier League": "gha.1",
 }
 
+# Map cup slugs to their parent league — for form data, use league not cup results
+CUP_TO_LEAGUE = {
+    "eng.fa":              "eng.1",
+    "eng.league_cup":      "eng.1",
+    "esp.copa_del_rey":    "esp.1",
+    "ita.coppa_italia":    "ita.1",
+    "ger.dfb_pokal":       "ger.1",
+    "fra.coupe_de_france": "fra.1",
+}
+
 # Cup competitions per country — used to fetch full schedule for rest/congestion
 ESPN_CUP_SLUGS = {
     "eng.1":  ["eng.fa", "eng.league_cup", "UEFA.CHAMPIONS", "UEFA.EUROPA"],

@@ -32,16 +32,20 @@ def build_basketball_features(
     def _extract(games, key):
         return [g[key] for g in games if g.get(key) is not None]
 
-    # ── Scoring averages ──────────────────────────────────────────────────
-    home_pts_for  = _extract(home_games, "pts_for")
-    home_pts_ag   = _extract(home_games, "pts_ag")
-    away_pts_for  = _extract(away_games, "pts_for")
-    away_pts_ag   = _extract(away_games, "pts_ag")
+    def _weighted_avg(games, key, window):
+        """Weighted rolling average — playoff games count 1.5x regular season."""
+        vals = [(g[key], 1.5 if g.get("playoff") else 1.0)
+                for g in games[:window] if g.get(key) is not None]
+        if not vals:
+            return None
+        total_w = sum(w for _, w in vals)
+        return sum(v * w for v, w in vals) / total_w
 
-    home_avg_pts    = rolling_average(home_pts_for, BASKETBALL_FORM_WINDOW) or NBA_AVG_POINTS
-    home_avg_allow  = rolling_average(home_pts_ag,  BASKETBALL_FORM_WINDOW) or NBA_AVG_POINTS
-    away_avg_pts    = rolling_average(away_pts_for, BASKETBALL_FORM_WINDOW) or NBA_AVG_POINTS
-    away_avg_allow  = rolling_average(away_pts_ag,  BASKETBALL_FORM_WINDOW) or NBA_AVG_POINTS
+    # ── Scoring averages (playoff games weighted 1.5×) ────────────────────
+    home_avg_pts   = _weighted_avg(home_games, "pts_for", BASKETBALL_FORM_WINDOW) or NBA_AVG_POINTS
+    home_avg_allow = _weighted_avg(home_games, "pts_ag",  BASKETBALL_FORM_WINDOW) or NBA_AVG_POINTS
+    away_avg_pts   = _weighted_avg(away_games, "pts_for", BASKETBALL_FORM_WINDOW) or NBA_AVG_POINTS
+    away_avg_allow = _weighted_avg(away_games, "pts_ag",  BASKETBALL_FORM_WINDOW) or NBA_AVG_POINTS
 
     # ── Offensive / Defensive ratings (simplified) ────────────────────────
     home_off_rating = home_avg_pts   / NBA_AVG_POINTS
@@ -81,8 +85,10 @@ def build_basketball_features(
     away_predicted = (away_off_rating * home_def_rating * NBA_AVG_POINTS
                       * away_rest * away_inj)
 
-    if home_h2h["matches"] >= 3:
-        h2h_weight     = 0.15
+    if home_h2h["matches"] >= 2:
+        # Increase H2H weight during playoffs — series games are highly predictive
+        playoff_h2h = sum(1 for g in h2h if g.get("playoff"))
+        h2h_weight  = 0.30 if playoff_h2h >= 1 else 0.15
         home_predicted = (1 - h2h_weight) * home_predicted + h2h_weight * home_h2h["avg_for"]
         away_predicted = (1 - h2h_weight) * away_predicted + h2h_weight * away_h2h["avg_for"]
 

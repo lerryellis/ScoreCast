@@ -274,11 +274,12 @@ async def predict_basketball_game(game: dict,
     for g in home_games:
         if g["game_id"] in away_ids:
             h2h.append({
-                "home_team": game["home_team"],
-                "away_team": game["away_team"],
+                "home_team":  game["home_team"],
+                "away_team":  game["away_team"],
                 "home_goals": g["pts_for"],
                 "away_goals": g["pts_ag"],
-                "date": g["date"],
+                "date":       g["date"],
+                "playoff":    g.get("playoff", False),
             })
 
     features   = build_basketball_features(

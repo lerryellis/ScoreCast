@@ -650,28 +650,14 @@ async def get_espn_nba_full_team_schedule(team_id: str) -> list:
         return []
 
 
-async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
-    """Fetch last N completed games for an NBA team from ESPN."""
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{ESPN_NBA_BASE}/teams/{team_id}/schedule",
-                timeout=15,
-            )
-            if r.status_code != 200:
-                return []
-            data = r.json()
-    except Exception:
-        return []
-
+def _parse_nba_schedule_events(events: list, tid: str, playoff: bool = False) -> list:
+    """Extract completed game dicts from ESPN NBA schedule events for one team."""
     matches = []
-    tid = str(team_id)
-    for event in data.get("events", []):
+    for event in events:
         comp = event["competitions"][0]
         if not comp.get("status", {}).get("type", {}).get("completed", False):
             continue
         competitors = comp["competitors"]
-        # Match by competitor id OR nested team id
         our = next(
             (c for c in competitors
              if c.get("id") == tid or c.get("team", {}).get("id") == tid),
@@ -684,25 +670,63 @@ async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
         )
         if not our or not opp:
             continue
+
         def _pts(c):
             s = c.get("score", 0)
             return int(s.get("value", 0) if isinstance(s, dict) else (s or 0))
 
-        our_score = _pts(our)
-        opp_score = _pts(opp)
         matches.append({
             "game_id":  event["id"],
             "date":     event["date"],
             "is_home":  our["homeAway"] == "home",
-            "pts_for":  our_score,
-            "pts_ag":   opp_score,
-            "fg_pct":   0.46,   # league avg defaults — ESPN schedule doesn't include box stats
+            "pts_for":  _pts(our),
+            "pts_ag":   _pts(opp),
+            "playoff":  playoff,
+            "fg_pct":   0.46,
             "fg3_pct":  0.36,
             "ft_pct":   0.77,
             "reb":      44,
             "ast":      25,
             "tov":      14,
         })
+    return matches
+
+
+async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
+    """Fetch last N completed games for an NBA team from ESPN.
+    Fetches regular season (seasontype=2) and playoffs (seasontype=3) in parallel
+    so playoff form and H2H carry over into predictions.
+    """
+    tid = str(team_id)
+
+    async def _fetch(seasontype: int):
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get(
+                    f"{ESPN_NBA_BASE}/teams/{tid}/schedule",
+                    params={"seasontype": seasontype},
+                    timeout=15,
+                )
+                if r.status_code != 200:
+                    return []
+                return r.json().get("events", [])
+        except Exception:
+            return []
+
+    reg_events, playoff_events = await asyncio.gather(_fetch(2), _fetch(3))
+
+    matches = (
+        _parse_nba_schedule_events(reg_events, tid, playoff=False)
+        + _parse_nba_schedule_events(playoff_events, tid, playoff=True)
+    )
+
+    # Deduplicate by game_id, keep playoff flag if present
+    seen: dict[str, dict] = {}
+    for m in matches:
+        gid = m["game_id"]
+        if gid not in seen or m["playoff"]:
+            seen[gid] = m
+    matches = list(seen.values())
 
     matches.sort(key=lambda x: x["date"], reverse=True)
     return matches[:n]

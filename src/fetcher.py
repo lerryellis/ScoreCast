@@ -573,8 +573,10 @@ async def get_espn_nba_scoreboard(date_str: Optional[str] = None) -> list:
             "away_team_id": away["team"]["id"],
             "home_score": int(home.get("score", 0) or 0),
             "away_score": int(away.get("score", 0) or 0),
-            "home_team_logo": (home["team"].get("logos") or [{}])[0].get("href", ""),
-            "away_team_logo": (away["team"].get("logos") or [{}])[0].get("href", ""),
+            "home_team_logo": (home["team"].get("logos") or [{}])[0].get("href", "")
+                              or f"https://a.espncdn.com/i/teamlogos/nba/500/{home['team']['id']}.png",
+            "away_team_logo": (away["team"].get("logos") or [{}])[0].get("href", "")
+                              or f"https://a.espncdn.com/i/teamlogos/nba/500/{away['team']['id']}.png",
         })
     return games
 
@@ -889,6 +891,12 @@ async def get_nba_scoreboard(date_str: Optional[str] = None) -> list:
                 if key in espn_map:
                     g["away_team_id"] = espn_map[key]
                     break
+        # Set logos using ESPN CDN now that we have team IDs
+        for g in games:
+            if g.get("home_team_id") and not g.get("home_team_logo"):
+                g["home_team_logo"] = f"https://a.espncdn.com/i/teamlogos/nba/500/{g['home_team_id']}.png"
+            if g.get("away_team_id") and not g.get("away_team_logo"):
+                g["away_team_logo"] = f"https://a.espncdn.com/i/teamlogos/nba/500/{g['away_team_id']}.png"
     except Exception:
         pass
 

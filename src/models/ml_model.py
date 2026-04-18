@@ -188,7 +188,7 @@ class SportsMLModel:
         """
         Return (corrected_lh, corrected_la) for football,
         or (corrected_home_pts, corrected_away_pts) for basketball.
-        Returns None if model not trained.
+        Returns None if model not trained or output is outside realistic range.
         """
         if not self.trained:
             return None
@@ -198,7 +198,18 @@ class SportsMLModel:
         X = np.array([vec], dtype=np.float32)
         lh = float(self.home_model.predict(X)[0])
         la = float(self.away_model.predict(X)[0])
-        return max(lh, 0.05), max(la, 0.05)
+
+        # Sport-specific sanity clamps — Poisson log-link can extrapolate to
+        # extreme values when inputs are outside the training distribution.
+        # Reject the ML correction entirely if output is unrealistic.
+        if self.sport == "football":
+            if not (0.05 <= lh <= 8.0) or not (0.05 <= la <= 8.0):
+                return None
+        else:  # basketball
+            if not (70 <= lh <= 160) or not (70 <= la <= 160):
+                return None
+
+        return lh, la
 
     # ── Persistence ───────────────────────────────────────────────────────────
 

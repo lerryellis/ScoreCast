@@ -17,12 +17,14 @@ def predict_basketball_score(features: dict) -> dict:
     Takes the feature dict from basketball.py and returns score predictions
     with confidence intervals and win probability.
     """
-    home_pred = features["home_predicted"]
-    away_pred = features["away_predicted"]
+    home_pred = max(70.0, min(160.0, float(features["home_predicted"])))
+    away_pred = max(70.0, min(160.0, float(features["away_predicted"])))
 
     # Use realistic std dev for uncertainty
-    home_std  = NBA_SCORE_STDDEV * (2 - features.get("home_rest_factor", 1.0))
-    away_std  = NBA_SCORE_STDDEV * (2 - features.get("away_rest_factor", 1.0))
+    home_rest = max(0.5, min(1.5, features.get("home_rest_factor", 1.0)))
+    away_rest = max(0.5, min(1.5, features.get("away_rest_factor", 1.0)))
+    home_std  = NBA_SCORE_STDDEV * (2 - home_rest)
+    away_std  = NBA_SCORE_STDDEV * (2 - away_rest)
 
     # Round to nearest integer for display
     home_score = round(home_pred)

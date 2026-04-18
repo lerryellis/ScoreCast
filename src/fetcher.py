@@ -164,12 +164,22 @@ async def get_espn_team_schedule_raw(team_id: str, league_slug: str, season: int
     return data.get("events", [])
 
 
-def _parse_events(events: list, team_id: str, comp_tag: str = "league") -> list:
-    """Parse ESPN event list into match dicts for a given team."""
+def _parse_events(events: list, team_id: str, comp_tag: str = "league",
+                   exclude_date: str = None) -> list:
+    """Parse ESPN event list into match dicts for a given team.
+
+    exclude_date (ISO YYYY-MM-DD): skip games on this date so today's
+    results never contaminate form data used in today's predictions.
+    """
+    from datetime import date as _date
+    today = exclude_date or _date.today().isoformat()
     matches = []
     for event in events:
         comp = event["competitions"][0]
         if not comp.get("status", {}).get("type", {}).get("completed", False):
+            continue
+        # Never include today's games in form history — locks prediction integrity
+        if event.get("date", "")[:10] == today:
             continue
         competitors = comp["competitors"]
         our = next((c for c in competitors if c["id"] == str(team_id)), None)
@@ -651,9 +661,15 @@ async def get_espn_nba_full_team_schedule(team_id: str) -> list:
 
 
 def _parse_nba_schedule_events(events: list, tid: str, playoff: bool = False) -> list:
-    """Extract completed game dicts from ESPN NBA schedule events for one team."""
+    """Extract completed game dicts from ESPN NBA schedule events for one team.
+    Excludes today's games to prevent real-time results leaking into form data.
+    """
+    from datetime import date as _date
+    today = _date.today().isoformat()
     matches = []
     for event in events:
+        if event.get("date", "")[:10] == today:
+            continue
         comp = event["competitions"][0]
         if not comp.get("status", {}).get("type", {}).get("completed", False):
             continue

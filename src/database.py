@@ -66,9 +66,13 @@ def _save_prediction_sync(pred: dict) -> None:
         "over_3_5":          ou.get("over_3_5"),
     }
     try:
+        # ignore_duplicates=True → INSERT ... ON CONFLICT DO NOTHING
+        # The first prediction made before kickoff is always preserved.
+        # Re-runs during/after the game never corrupt the learning signal.
         client.table("predictions").upsert(
             record,
             on_conflict="fixture_id,match_date",
+            ignore_duplicates=True,
         ).execute()
     except Exception as e:
         print(f"[DB save error] {e}")
@@ -79,6 +83,37 @@ async def save_prediction(pred: dict) -> None:
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
     await asyncio.to_thread(_save_prediction_sync, pred)
+
+
+async def get_saved_predictions(fixture_ids: list, match_date: str) -> dict:
+    """
+    Fetch saved (locked) predictions for a set of fixture IDs on a given date.
+    Returns {fixture_id: prediction_row} so callers can attach the original
+    prediction to live/final games without re-running the model.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY or not fixture_ids:
+        return {}
+
+    def _fetch():
+        return (
+            _get_client()
+            .table("predictions")
+            .select("fixture_id, predicted_home, predicted_away, "
+                    "predicted_home_ht, predicted_away_ht, "
+                    "lambda_home, lambda_away, "
+                    "win_prob, draw_prob, loss_prob, confidence, "
+                    "safe_bet_line, safe_bet_prob, "
+                    "over_0_5, over_1_5, over_2_5, over_3_5")
+            .in_("fixture_id", [str(f) for f in fixture_ids])
+            .eq("match_date", match_date)
+            .execute()
+        ).data or []
+
+    try:
+        rows = await asyncio.to_thread(_fetch)
+        return {r["fixture_id"]: r for r in rows}
+    except Exception:
+        return {}
 
 
 async def save_predictions(preds: list) -> None:
@@ -121,7 +156,8 @@ def _save_basketball_sync(pred: dict) -> None:
     }
     try:
         resp = client.table("predictions").upsert(
-            record, on_conflict="fixture_id,match_date"
+            record, on_conflict="fixture_id,match_date",
+            ignore_duplicates=True,
         ).execute()
     except Exception as e:
         print(f"[DB basketball save error] {e}")

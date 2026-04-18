@@ -147,9 +147,54 @@ async def get_all_football_predictions(league_name: str = "Premier League",
     away_bias   = league_bias.get("away", 1.0)
     rho_factor  = league_bias.get("rho_factor", 1.0)
 
+    # Fetch locked predictions for any live/final games — don't re-run the model
+    from src.database import get_saved_predictions
+    live_final_ids = [f["fixture_id"] for f in fixtures if f.get("is_live") or f.get("is_final")]
+    saved_preds = await get_saved_predictions(live_final_ids, date_str) if live_final_ids else {}
+
     results = []
     for fixture in fixtures:
         try:
+            if (fixture.get("is_live") or fixture.get("is_final")) and str(fixture["fixture_id"]) in saved_preds:
+                # Game has started or finished — show the locked pre-kickoff prediction
+                saved = saved_preds[str(fixture["fixture_id"])]
+                pred = {
+                    "sport":         "football",
+                    "fixture_id":    fixture["fixture_id"],
+                    "home_team":     fixture["home_team"],
+                    "home_team_id":  fixture["home_team_id"],
+                    "home_team_logo": fixture.get("home_team_logo", ""),
+                    "away_team":     fixture["away_team"],
+                    "away_team_id":  fixture["away_team_id"],
+                    "away_team_logo": fixture.get("away_team_logo", ""),
+                    "league":        fixture.get("league", ""),
+                    "league_slug":   fixture.get("league_slug", ""),
+                    "match_time":    fixture.get("date", ""),
+                    "venue":         fixture.get("venue", ""),
+                    "status":        fixture.get("status", ""),
+                    "is_live":       fixture.get("is_live", False),
+                    "is_final":      fixture.get("is_final", False),
+                    "home_goals":    fixture.get("home_goals"),
+                    "away_goals":    fixture.get("away_goals"),
+                    "home_goals_ht": fixture.get("home_goals_ht"),
+                    "away_goals_ht": fixture.get("away_goals_ht"),
+                    "prediction":    {
+                        "predicted_home":    saved["predicted_home"],
+                        "predicted_away":    saved["predicted_away"],
+                        "predicted_home_ht": saved.get("predicted_home_ht"),
+                        "predicted_away_ht": saved.get("predicted_away_ht"),
+                        "win_probability":   saved.get("win_prob"),
+                        "draw_probability":  saved.get("draw_prob"),
+                        "loss_probability":  saved.get("loss_prob"),
+                        "confidence":        saved.get("confidence"),
+                        "safe_bet":          {"line": saved.get("safe_bet_line"), "probability": saved.get("safe_bet_prob")},
+                        "over_under":        {k: saved.get(k) for k in ("over_0_5","over_1_5","over_2_5","over_3_5")},
+                    },
+                    "prediction_locked": True,
+                }
+                results.append(pred)
+                continue
+
             pred = await predict_football_fixture(
                 fixture, standings=standings,
                 home_bias=home_bias, away_bias=away_bias,
@@ -405,8 +450,44 @@ async def get_all_basketball_predictions(target_date: str = None) -> list:
     nba_bias   = bias.get("leagues", {}).get("NBA") or bias.get("global", {})
     home_bias  = nba_bias.get("home", 1.0)
     away_bias  = nba_bias.get("away", 1.0)
+    match_date = target_date or _date.today().isoformat()
+
+    # Fetch locked predictions for live/final games
+    from src.database import get_saved_predictions
+    live_final_game_ids = [g["game_id"] for g in games if g.get("is_live") or g.get("is_final")]
+    saved_preds = await get_saved_predictions(live_final_game_ids, match_date) if live_final_game_ids else {}
 
     async def _safe_predict(game):
+        # Game has started — return locked pre-kickoff prediction
+        if (game.get("is_live") or game.get("is_final")) and str(game["game_id"]) in saved_preds:
+            saved = saved_preds[str(game["game_id"])]
+            return {
+                "sport":          "basketball",
+                "game_id":        game["game_id"],
+                "home_team":      game["home_team"],
+                "home_team_id":   game.get("home_team_id", ""),
+                "home_abbr":      game.get("home_abbr", ""),
+                "home_team_logo": game.get("home_team_logo", ""),
+                "away_team":      game["away_team"],
+                "away_team_id":   game.get("away_team_id", ""),
+                "away_abbr":      game.get("away_abbr", ""),
+                "away_team_logo": game.get("away_team_logo", ""),
+                "status":         game.get("status", ""),
+                "is_live":        game.get("is_live", False),
+                "is_final":       game.get("is_final", False),
+                "home_score":     game.get("home_score"),
+                "away_score":     game.get("away_score"),
+                "prediction": {
+                    "predicted_home":  saved["predicted_home"],
+                    "predicted_away":  saved["predicted_away"],
+                    "win_probability": saved.get("win_prob"),
+                    "loss_probability":saved.get("loss_prob"),
+                    "confidence":      saved.get("confidence"),
+                    "safe_bet": {"line": saved.get("safe_bet_line"), "probability": saved.get("safe_bet_prob")},
+                },
+                "match_date":       match_date,
+                "prediction_locked": True,
+            }
         try:
             return await predict_basketball_game(game, home_bias=home_bias, away_bias=away_bias)
         except Exception as e:
@@ -417,8 +498,6 @@ async def get_all_basketball_predictions(target_date: str = None) -> list:
     preds = await asyncio.gather(*[_safe_predict(g) for g in games])
     results = [p for p in preds if p is not None]
 
-    # Tag match_date and save (resolves immediately if game is final)
-    match_date = target_date or _date.today().isoformat()
     for p in results:
         p["match_date"] = match_date[:10]
 

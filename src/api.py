@@ -34,30 +34,44 @@ app.add_middleware(
 
 
 async def _auto_resolve_loop():
-    """Resolve yesterday's predictions every day at midnight UTC."""
+    """Resolve yesterday's predictions at 00:05 UTC, then retrain ML models."""
     from datetime import datetime, timezone, timedelta
     while True:
         try:
             now = datetime.now(timezone.utc)
-            # Next midnight UTC
             next_midnight = (now + timedelta(days=1)).replace(
                 hour=0, minute=5, second=0, microsecond=0
             )
             await asyncio.sleep((next_midnight - now).total_seconds())
-            from src.database import resolve_predictions
+
+            from src.database import resolve_predictions, _bias_cache
             count = await resolve_predictions()
-            # Bust bias cache so next predictions use fresh calibration
-            from src.database import _bias_cache
             _bias_cache.clear()
             print(f"[AutoResolve] Resolved {count} predictions, bias cache cleared")
+
+            # Retrain ML models with the freshly resolved data
+            from src.training import train_all
+            metrics = await train_all()
+            print(f"[AutoTrain] {metrics}")
         except Exception as e:
             print(f"[AutoResolve error] {e}")
-            await asyncio.sleep(3600)   # retry in 1h if something goes wrong
+            await asyncio.sleep(3600)
 
 
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(_auto_resolve_loop())
+    # Try to load existing models from disk on startup
+    from src.models.ml_model import get_football_ml, get_basketball_ml
+    get_football_ml()
+    get_basketball_ml()
+    # If no models exist but enough data does, train immediately
+    from src.models.ml_model import _football_ml, _basketball_ml
+    if _football_ml is None or _basketball_ml is None:
+        async def _try_train():
+            from src.training import train_all
+            await train_all()
+        asyncio.create_task(_try_train())
 
 
 @app.get("/")
@@ -443,6 +457,45 @@ async def resolve_predictions_endpoint(admin_key: str = Query(...)):
         return {"resolved": count}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/train")
+async def train_ml_models(admin_key: str = Query(...), sport: str = Query("all")):
+    """Train (or retrain) ML correction models from resolved predictions."""
+    from src.config import ADMIN_KEY
+    if admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from src.training import train_model, train_all
+        if sport == "all":
+            metrics = await train_all()
+        else:
+            metrics = await train_model(sport)
+        return {"status": "ok", "metrics": metrics}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/ml-status")
+async def ml_status(admin_key: str = Query(...)):
+    """Return current ML model metadata (training date, sample size, accuracy)."""
+    from src.config import ADMIN_KEY
+    if admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from src.models.ml_model import get_football_ml, get_basketball_ml
+    def _info(model):
+        if model is None or not model.trained:
+            return {"trained": False}
+        return {
+            "trained":     True,
+            "trained_at":  model.trained_at,
+            "n_samples":   model.n_samples,
+            **model.eval_metrics,
+        }
+    return {
+        "football":   _info(get_football_ml()),
+        "basketball": _info(get_basketball_ml()),
+    }
 
 
 @app.get("/api/health")

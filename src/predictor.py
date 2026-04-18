@@ -61,9 +61,38 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
     features["home_bias_applied"]    = round(home_bias, 4)
     features["away_bias_applied"]    = round(away_bias, 4)
     features["rho_factor_applied"]   = round(rho_factor, 4)
-    # rho_factor > 1 = more draws than predicted → make correction more negative
     effective_rho = max(-0.15, min(0.0, -0.04 * rho_factor))
-    prediction = predict_football_score(calibrated_lh, calibrated_la, rho=effective_rho)
+
+    # ── Base Poisson prediction (used as ML input features) ───────────────
+    base_pred = predict_football_score(calibrated_lh, calibrated_la, rho=effective_rho)
+
+    # ── ML correction: re-run Poisson with ML-refined lambdas ─────────────
+    from src.models.ml_model import get_football_ml
+    ml = get_football_ml()
+    ml_corrected = False
+    if ml and ml.trained:
+        ml_row = {
+            **features,
+            "league":        fixture.get("league", ""),
+            "win_prob":      base_pred["win_probability"],
+            "draw_prob":     base_pred["draw_probability"],
+            "loss_prob":     base_pred["loss_probability"],
+            "confidence":    base_pred["confidence"],
+            "predicted_home": base_pred["predicted_home"],
+            "predicted_away": base_pred["predicted_away"],
+            **{k: base_pred["over_under"].get(k) for k in ("over_0_5","over_1_5","over_2_5","over_3_5")},
+        }
+        result = ml.predict(ml_row)
+        if result:
+            ml_lh, ml_la = result
+            prediction = predict_football_score(ml_lh, ml_la, rho=effective_rho)
+            features["ml_lambda_home"] = round(ml_lh, 4)
+            features["ml_lambda_away"] = round(ml_la, 4)
+            ml_corrected = True
+    if not ml_corrected:
+        prediction = base_pred
+
+    features["ml_corrected"] = ml_corrected
 
     return {
         "sport":         "football",
@@ -301,7 +330,36 @@ async def predict_basketball_game(game: dict,
     features["away_predicted"] = round(features["away_predicted"] * away_bias, 1)
     features["home_bias_applied"] = round(home_bias, 4)
     features["away_bias_applied"] = round(away_bias, 4)
-    prediction = predict_basketball_score(features)
+
+    # ── Base basketball prediction (used as ML input features) ────────────
+    base_pred = predict_basketball_score(features)
+
+    # ── ML correction: re-run with ML-refined score estimates ─────────────
+    from src.models.ml_model import get_basketball_ml
+    ml = get_basketball_ml()
+    ml_corrected = False
+    if ml and ml.trained:
+        ml_row = {
+            "predicted_home": base_pred["predicted_home"],
+            "predicted_away": base_pred["predicted_away"],
+            "win_prob":       base_pred["win_probability"],
+            "loss_prob":      base_pred["loss_probability"],
+            "confidence":     base_pred["confidence"],
+            "league":         "NBA",
+        }
+        result = ml.predict(ml_row)
+        if result:
+            ml_home, ml_away = result
+            features["home_predicted"] = round(ml_home, 1)
+            features["away_predicted"] = round(ml_away, 1)
+            features["ml_home_predicted"] = round(ml_home, 1)
+            features["ml_away_predicted"] = round(ml_away, 1)
+            prediction = predict_basketball_score(features)
+            ml_corrected = True
+    if not ml_corrected:
+        prediction = base_pred
+
+    features["ml_corrected"] = ml_corrected
 
     # Normalise form to same shape frontend expects
     def _fmt_form(games):

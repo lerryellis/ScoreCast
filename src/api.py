@@ -33,6 +33,33 @@ app.add_middleware(
 )
 
 
+async def _auto_resolve_loop():
+    """Resolve yesterday's predictions every day at midnight UTC."""
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            # Next midnight UTC
+            next_midnight = (now + timedelta(days=1)).replace(
+                hour=0, minute=5, second=0, microsecond=0
+            )
+            await asyncio.sleep((next_midnight - now).total_seconds())
+            from src.database import resolve_predictions
+            count = await resolve_predictions()
+            # Bust bias cache so next predictions use fresh calibration
+            from src.database import _bias_cache
+            _bias_cache.clear()
+            print(f"[AutoResolve] Resolved {count} predictions, bias cache cleared")
+        except Exception as e:
+            print(f"[AutoResolve error] {e}")
+            await asyncio.sleep(3600)   # retry in 1h if something goes wrong
+
+
+@app.on_event("startup")
+async def startup():
+    asyncio.create_task(_auto_resolve_loop())
+
+
 @app.get("/")
 async def root():
     return FileResponse("index.html")

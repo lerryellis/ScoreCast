@@ -23,7 +23,7 @@ from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES, ESPN_INTERNATION
 
 async def predict_football_fixture(fixture: dict, standings: dict = None,
                                     home_bias: float = 1.0, away_bias: float = 1.0,
-                                    **_) -> dict:
+                                    rho_factor: float = 1.0, **_) -> dict:
     """Full prediction pipeline for one football fixture."""
     home_id     = fixture["home_team_id"]
     away_id     = fixture["away_team_id"]
@@ -60,7 +60,10 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
     features["lambda_away"] = round(calibrated_la, 4)
     features["home_bias_applied"]    = round(home_bias, 4)
     features["away_bias_applied"]    = round(away_bias, 4)
-    prediction = predict_football_score(calibrated_lh, calibrated_la)
+    features["rho_factor_applied"]   = round(rho_factor, 4)
+    # rho_factor > 1 = more draws than predicted → make correction more negative
+    effective_rho = max(-0.15, min(0.0, -0.04 * rho_factor))
+    prediction = predict_football_score(calibrated_lh, calibrated_la, rho=effective_rho)
 
     return {
         "sport":         "football",
@@ -113,6 +116,7 @@ async def get_all_football_predictions(league_name: str = "Premier League",
     league_bias = bias.get("leagues", {}).get(league_name) or bias.get("global", {})
     home_bias   = league_bias.get("home", 1.0)
     away_bias   = league_bias.get("away", 1.0)
+    rho_factor  = league_bias.get("rho_factor", 1.0)
 
     results = []
     for fixture in fixtures:
@@ -120,6 +124,7 @@ async def get_all_football_predictions(league_name: str = "Premier League",
             pred = await predict_football_fixture(
                 fixture, standings=standings,
                 home_bias=home_bias, away_bias=away_bias,
+                rho_factor=rho_factor,
             )
 
             # Enrich with HT scores from football-data.org (better source than ESPN)
@@ -155,7 +160,8 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 
 async def predict_international_fixture(fixture: dict,
                                          home_bias: float = 1.0,
-                                         away_bias: float = 1.0) -> dict:
+                                         away_bias: float = 1.0,
+                                         rho_factor: float = 1.0) -> dict:
     """Full prediction pipeline for one international football fixture."""
     home_id = fixture["home_team_id"]
     away_id = fixture["away_team_id"]
@@ -177,7 +183,9 @@ async def predict_international_fixture(fixture: dict,
     features["lambda_away"] = round(calibrated_la, 4)
     features["home_bias_applied"] = round(home_bias, 4)
     features["away_bias_applied"] = round(away_bias, 4)
-    prediction = predict_football_score(calibrated_lh, calibrated_la)
+    features["rho_factor_applied"] = round(rho_factor, 4)
+    effective_rho = max(-0.15, min(0.0, -0.04 * rho_factor))
+    prediction = predict_football_score(calibrated_lh, calibrated_la, rho=effective_rho)
 
     return {
         "sport":          "international",
@@ -227,12 +235,14 @@ async def get_all_international_predictions(league_name: str = "World Cup 2026",
     intl_bias  = bias.get("global", {})
     home_bias  = intl_bias.get("home", 1.0)
     away_bias  = intl_bias.get("away", 1.0)
+    rho_factor = intl_bias.get("rho_factor", 1.0)
 
     results = []
     for fixture in fixtures:
         try:
             pred = await predict_international_fixture(
                 fixture, home_bias=home_bias, away_bias=away_bias,
+                rho_factor=rho_factor,
             )
             results.append(pred)
         except Exception as e:

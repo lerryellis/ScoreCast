@@ -85,6 +85,14 @@ def build_basketball_features(
     away_predicted = (away_off_rating * home_def_rating * NBA_AVG_POINTS
                       * away_rest * away_inj)
 
+    # ── Playoff mode: scoring drops ~5% due to defensive intensity ───────
+    recent = home_games[:5] + away_games[:5]
+    playoff_share = sum(1 for g in recent if g.get("playoff")) / len(recent) if recent else 0
+    playoff_deflator = 1.0 - (playoff_share * 0.05)   # up to -5% at full playoff schedule
+
+    home_predicted *= playoff_deflator
+    away_predicted *= playoff_deflator
+
     if home_h2h["matches"] >= 2:
         # Increase H2H weight during playoffs — series games are highly predictive
         playoff_h2h = sum(1 for g in h2h if g.get("playoff"))
@@ -111,6 +119,8 @@ def build_basketball_features(
         "away_rest_factor":  round(away_rest, 3),
         "home_injury_factor":round(home_inj,  3),
         "away_injury_factor":round(away_inj,  3),
+        "playoff_share":     round(playoff_share, 2),
+        "playoff_deflator":  round(playoff_deflator, 3),
         "h2h_matches":       home_h2h["matches"],
         "h2h_home_avg":      round(home_h2h["avg_for"], 1),
         "h2h_away_avg":      round(away_h2h["avg_for"], 1),

@@ -104,6 +104,24 @@ def _position_motivation(rank: int, total: int = TOTAL_TEAMS) -> float:
     return 1.0
 
 
+def _rank_quality_factors(home_rank: int, away_rank: int,
+                           total: int = TOTAL_TEAMS) -> tuple:
+    """
+    Adjusts lambdas based on the quality gap between the two teams.
+    Table position is a season-long signal that smooths out noisy short-term form.
+
+    A 19-place gap (1st vs 20th) produces ±10% on each team's lambda.
+    Returns (home_factor, away_factor).
+    """
+    if home_rank == 0 or away_rank == 0:
+        return 1.0, 1.0  # unknown ranks — no adjustment
+    # Positive = home is better ranked (lower number is better)
+    quality_gap = (away_rank - home_rank) / total
+    home_factor = max(0.90, min(1.10, 1.0 + quality_gap * 0.10))
+    away_factor = max(0.90, min(1.10, 1.0 - quality_gap * 0.10))
+    return home_factor, away_factor
+
+
 # ── Helper: multi-window form average ────────────────────────────────────────
 def _weighted_avg(matches_all: list, key: str, w5: float = 0.5, w10: float = 0.5) -> float:
     """
@@ -195,9 +213,12 @@ def build_football_features(
     home_inj         = injury_impact_factor(home_injuries)
     away_inj         = injury_impact_factor(away_injuries)
 
-    # ── 8. League position motivation ────────────────────────────────────
+    # ── 8. League position: absolute motivation + relative quality gap ───
     home_motivation  = _position_motivation(home_rank, total_teams)
     away_motivation  = _position_motivation(away_rank, total_teams)
+    home_rank_quality, away_rank_quality = _rank_quality_factors(
+        home_rank, away_rank, total_teams
+    )
 
     # ── 9. H2H (last 5 overall + venue-specific at this ground) ──────────
     home_h2h         = h2h_avg_scores(h2h, home_team_name)
@@ -214,12 +235,14 @@ def build_football_features(
         * HOME_ADVANTAGE_FACTOR
         * home_rest * home_inj * home_momentum
         * home_congestion * home_motivation
+        * home_rank_quality          # season-long quality signal
         * away_cs_factor
     )
     lambda_away = (
         away_attack * home_defence * LEAGUE_AVG_GOALS
         * away_rest * away_inj * away_momentum
         * away_congestion * away_motivation
+        * away_rank_quality          # season-long quality signal
         * home_cs_factor
     )
 
@@ -254,8 +277,10 @@ def build_football_features(
         "away_rest_factor":     round(away_rest,      3),
         "home_congestion":      round(home_congestion,3),
         "away_congestion":      round(away_congestion,3),
-        "home_motivation":      round(home_motivation,3),
-        "away_motivation":      round(away_motivation,3),
+        "home_motivation":      round(home_motivation,    3),
+        "away_motivation":      round(away_motivation,    3),
+        "home_rank_quality":    round(home_rank_quality,  3),
+        "away_rank_quality":    round(away_rank_quality,  3),
         "home_injury_factor":   round(home_inj,       3),
         "away_injury_factor":   round(away_inj,       3),
         "home_rank":            home_rank,

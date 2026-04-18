@@ -31,7 +31,7 @@ def _dixon_coles_correction(home: int, away: int, lam_h: float, lam_a: float, rh
     return 1.0
 
 
-def predict_football_score(lambda_home: float, lambda_away: float) -> dict:
+def predict_football_score(lambda_home: float, lambda_away: float, rho: float = -0.04) -> dict:
     """
     Given expected goals for home and away teams, returns:
     - predicted_home, predicted_away: most likely scoreline
@@ -50,7 +50,7 @@ def predict_football_score(lambda_home: float, lambda_away: float) -> dict:
     for h in goals_range:
         for a in goals_range:
             p  = poisson.pmf(h, lambda_home) * poisson.pmf(a, lambda_away)
-            p *= _dixon_coles_correction(h, a, lambda_home, lambda_away)
+            p *= _dixon_coles_correction(h, a, lambda_home, lambda_away, rho=rho)
             prob_matrix[h][a] = p
 
     # Normalise

@@ -86,8 +86,23 @@ ESPN_INTERNATIONAL_LEAGUES = {
     "International Friendlies": "fifa.friendly",
 }
 
-# All international slugs — used to build full match history for a national team
-INTERNATIONAL_COMP_SLUGS = list(ESPN_INTERNATIONAL_LEAGUES.values())
+# Broader set used only for building a national team's match history + H2H —
+# includes the major continental tournaments and every confederation's WC
+# qualifiers, which are the richest sources of head-to-head meetings. These are
+# NOT shown in the prediction dropdown (that stays ESPN_INTERNATIONAL_LEAGUES).
+INTERNATIONAL_COMP_SLUGS = list(dict.fromkeys(
+    list(ESPN_INTERNATIONAL_LEAGUES.values()) + [
+        "fifa.worldq.concacaf",   # CONCACAF WC qualifiers
+        "fifa.worldq.afc",        # AFC (Asia) WC qualifiers
+        "fifa.worldq.ofc",        # OFC (Oceania) WC qualifiers
+        "uefa.euro",              # UEFA European Championship
+        "conmebol.america",       # Copa América
+        "caf.nations",            # Africa Cup of Nations
+        "concacaf.gold",          # CONCACAF Gold Cup
+        "afc.asian.cup",          # AFC Asian Cup
+        "concacaf.nations.league",# CONCACAF Nations League
+    ]
+))
 
 # NBA is the only basketball league for now
 BASKETBALL_LEAGUE = "NBA"

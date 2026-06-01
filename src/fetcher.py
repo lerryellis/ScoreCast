@@ -272,55 +272,70 @@ async def get_intl_team_all_matches(team_id: str, n: int = 20) -> list:
     return unique[:n]
 
 
-async def get_intl_head_to_head(home_id: str, away_id: str, last: int = 5) -> list:
-    """Find H2H results between two national teams across all international competitions."""
+async def get_intl_head_to_head(home_id: str, away_id: str, last: int = 5,
+                                 seasons_back: int = 6) -> list:
+    """Find H2H results between two national teams across all international competitions.
+
+    ESPN's team-schedule endpoint only returns one season at a time, and national
+    teams rarely meet twice in the same season — so we walk back several seasons
+    (querying every international competition) until we have `last` meetings.
+    """
     from src.config import INTERNATIONAL_COMP_SLUGS
+    from datetime import date as _date
 
-    home_tasks = [get_espn_team_schedule_raw(home_id, slug) for slug in INTERNATIONAL_COMP_SLUGS]
-    away_tasks = [get_espn_team_schedule_raw(away_id, slug) for slug in INTERNATIONAL_COMP_SLUGS]
-    all_results = await asyncio.gather(*(home_tasks + away_tasks), return_exceptions=True)
+    current_season = _date.today().year
+    h2h: list = []
+    seen_events: set = set()
 
-    home_results = all_results[:len(INTERNATIONAL_COMP_SLUGS)]
-    away_results = all_results[len(INTERNATIONAL_COMP_SLUGS):]
+    for offset in range(seasons_back):
+        season = current_season - offset
+        # Fetch every competition for both teams for this season, concurrently.
+        home_tasks = [get_espn_team_schedule_raw(home_id, slug, season=season)
+                      for slug in INTERNATIONAL_COMP_SLUGS]
+        away_tasks = [get_espn_team_schedule_raw(away_id, slug, season=season)
+                      for slug in INTERNATIONAL_COMP_SLUGS]
+        all_results = await asyncio.gather(*(home_tasks + away_tasks),
+                                           return_exceptions=True)
+        home_results = all_results[:len(INTERNATIONAL_COMP_SLUGS)]
+        away_results = all_results[len(INTERNATIONAL_COMP_SLUGS):]
 
-    away_event_ids = set()
-    for result in away_results:
-        if isinstance(result, Exception):
-            continue
-        for event in result:
-            away_event_ids.add(event["id"])
+        away_event_ids = set()
+        for result in away_results:
+            if isinstance(result, Exception):
+                continue
+            for event in result:
+                away_event_ids.add(event["id"])
 
-    h2h = []
-    for result in home_results:
-        if isinstance(result, Exception):
-            continue
-        for event in result:
-            if event["id"] not in away_event_ids:
+        for result in home_results:
+            if isinstance(result, Exception):
                 continue
-            comp = event["competitions"][0]
-            if not comp.get("status", {}).get("type", {}).get("completed", False):
-                continue
-            competitors = comp["competitors"]
-            home_c = next((c for c in competitors if c["id"] == str(home_id)), None)
-            away_c = next((c for c in competitors if c["id"] == str(away_id)), None)
-            if not home_c or not away_c:
-                continue
-            hs = home_c.get("score", {})
-            as_ = away_c.get("score", {})
-            hg = hs.get("value") if isinstance(hs, dict) else hs
-            ag = as_.get("value") if isinstance(as_, dict) else as_
-            if hg is None or ag is None:
-                continue
-            h2h.append({
-                "home_team": home_c["team"]["displayName"],
-                "away_team": away_c["team"]["displayName"],
-                "home_goals": int(hg),
-                "away_goals": int(ag),
-                "date": event["date"],
-                "fixture_home_at_home": home_c["homeAway"] == "home",
-            })
-            if len(h2h) >= last:
-                break
+            for event in result:
+                if event["id"] not in away_event_ids or event["id"] in seen_events:
+                    continue
+                comp = event["competitions"][0]
+                if not comp.get("status", {}).get("type", {}).get("completed", False):
+                    continue
+                competitors = comp["competitors"]
+                home_c = next((c for c in competitors if c["id"] == str(home_id)), None)
+                away_c = next((c for c in competitors if c["id"] == str(away_id)), None)
+                if not home_c or not away_c:
+                    continue
+                hs = home_c.get("score", {})
+                as_ = away_c.get("score", {})
+                hg = hs.get("value") if isinstance(hs, dict) else hs
+                ag = as_.get("value") if isinstance(as_, dict) else as_
+                if hg is None or ag is None:
+                    continue
+                seen_events.add(event["id"])
+                h2h.append({
+                    "home_team": home_c["team"]["displayName"],
+                    "away_team": away_c["team"]["displayName"],
+                    "home_goals": int(hg),
+                    "away_goals": int(ag),
+                    "date": event["date"],
+                    "fixture_home_at_home": home_c["homeAway"] == "home",
+                })
+
         if len(h2h) >= last:
             break
 

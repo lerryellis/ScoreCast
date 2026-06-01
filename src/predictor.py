@@ -232,6 +232,45 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 
 # ─── International Football ──────────────────────────────────────────────────
 
+import re
+
+# Patterns ESPN uses for undetermined bracket/qualifier slots instead of a real
+# national team (e.g. World Cup 2026 playoff paths still being decided).
+_PLACEHOLDER_RE = re.compile(
+    r"\b(tbd|tba|winner|loser|runner[\s-]?up|qualifier|play[\s-]?off|"
+    r"group\s+[a-l]|path\s+[a-z0-9]|to\s+be\s+(determined|announced))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_placeholder_team(name: str) -> bool:
+    """True when an ESPN team name is a bracket placeholder, not a real team.
+
+    These slots have no match history, so predicting them is meaningless — we
+    skip the fixture entirely rather than show a fake "Winner Group A" matchup.
+    """
+    if not name or not name.strip():
+        return True
+    # Pure code-style slots like "1A", "2B", "W37", "RU2"
+    if re.fullmatch(r"(?:[wl]?\d{1,2}[a-l]?|ru\d|\d[a-l])", name.strip(), re.IGNORECASE):
+        return True
+    return bool(_PLACEHOLDER_RE.search(name))
+
+
+def _fixture_has_real_teams(fixture: dict) -> bool:
+    """Both sides must be real national teams with usable IDs."""
+    if _is_placeholder_team(fixture.get("home_team", "")):
+        return False
+    if _is_placeholder_team(fixture.get("away_team", "")):
+        return False
+    # A real ESPN team always carries a positive numeric id
+    for key in ("home_team_id", "away_team_id"):
+        tid = str(fixture.get(key, "")).strip()
+        if not tid or not tid.isdigit() or int(tid) <= 0:
+            return False
+    return True
+
+
 async def predict_international_fixture(fixture: dict,
                                          home_bias: float = 1.0,
                                          away_bias: float = 1.0,
@@ -310,6 +349,10 @@ async def get_all_international_predictions(league_name: str = "World Cup 2026",
     home_bias  = intl_bias.get("home", 1.0)
     away_bias  = intl_bias.get("away", 1.0)
     rho_factor = intl_bias.get("rho_factor", 1.0)
+
+    # Drop bracket placeholders (e.g. "Winner Group A") that ESPN returns before
+    # the real qualified teams are known — they have no history to predict on.
+    fixtures = [f for f in fixtures if _fixture_has_real_teams(f)]
 
     results = []
     for fixture in fixtures:

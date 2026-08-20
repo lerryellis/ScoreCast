@@ -18,6 +18,12 @@ from src.models.football_model import predict_football_score
 from src.models.basketball_model import predict_basketball_score
 from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES, ESPN_INTERNATIONAL_LEAGUES, CUP_TO_LEAGUE
 
+# ESPN's standings table lists every team at rank 1..N (alphabetical/seeded)
+# before any games are played — not a real position. Don't trust "rank" for
+# the quality-gap/motivation adjustments until a team has actually played
+# enough games for its table position to mean something.
+MIN_GAMES_FOR_RANK = 3
+
 
 # ─── Football ─────────────────────────────────────────────────────────────────
 
@@ -43,8 +49,15 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
     )
 
     standings = standings or {}
-    home_rank  = standings.get(str(home_id), {}).get("rank", 0)
-    away_rank  = standings.get(str(away_id), {}).get("rank", 0)
+    home_entry = standings.get(str(home_id), {})
+    away_entry = standings.get(str(away_id), {})
+    # ESPN publishes a full standings table with rank 1..N before a single ball
+    # is kicked (games_played=0 for everyone) — that's alphabetical/seeded
+    # placeholder order, not a real table position. Treat rank as unknown
+    # (0 -> no adjustment in _rank_quality_factors/_position_motivation)
+    # until each side has actually played enough games for it to mean anything.
+    home_rank  = home_entry.get("rank", 0) if home_entry.get("games_played", 0) >= MIN_GAMES_FOR_RANK else 0
+    away_rank  = away_entry.get("rank", 0) if away_entry.get("games_played", 0) >= MIN_GAMES_FOR_RANK else 0
 
     features = build_football_features(
         home_matches, away_matches, h2h,

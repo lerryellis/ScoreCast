@@ -165,14 +165,20 @@ async def get_espn_team_schedule_raw(team_id: str, league_slug: str, season: int
 
 
 def _parse_events(events: list, team_id: str, comp_tag: str = "league",
-                   exclude_date: str = None) -> list:
+                   exclude_date: str = None, tier_by_id: dict = None) -> list:
     """Parse ESPN event list into match dicts for a given team.
 
     exclude_date (ISO YYYY-MM-DD): skip games on this date so today's
     results never contaminate form data used in today's predictions.
+
+    tier_by_id: optional {event_id: tier_offset} map (see
+    _schedule_with_season_fallback) — how many divisions down this specific
+    match was pulled from, so features/football.py can discount stats that
+    came from a weaker feeder league. Defaults to 0 (same tier) when absent.
     """
     from datetime import date as _date
     today = exclude_date or _date.today().isoformat()
+    tier_by_id = tier_by_id or {}
     matches = []
     for event in events:
         comp = event["competitions"][0]
@@ -200,6 +206,7 @@ def _parse_events(events: list, team_id: str, comp_tag: str = "league",
             "goals_ag":    int(goals_ag),
             "opponent_id": opp["id"],
             "comp":        comp_tag,
+            "tier_offset": tier_by_id.get(event["id"], 0),
         })
     return matches
 
@@ -228,7 +235,9 @@ async def _schedule_with_season_fallback(team_id: str, slug: str,
     the pyramid runs out. Their actual recent form, a tier or two down, beats
     showing no data at all.
 
-    Returns raw ESPN event dicts, deduped by id — not parsed/filtered.
+    Returns (events, tier_by_id): raw ESPN event dicts deduped by id (not
+    parsed/filtered), plus a {event_id: tier_offset} map recording how many
+    divisions down each event's data came from (0 = the slug passed in).
     """
     from datetime import date as _date
     from src.config import PROMOTION_FEEDER_LEAGUE
@@ -236,12 +245,14 @@ async def _schedule_with_season_fallback(team_id: str, slug: str,
 
     seen_ids = set()
     merged = []
+    tier_by_id = {}
 
-    def _add(events):
+    def _add(events, tier):
         for e in events:
             if e["id"] not in seen_ids:
                 seen_ids.add(e["id"])
                 merged.append(e)
+                tier_by_id[e["id"]] = tier
 
     def _completed():
         return sum(
@@ -249,34 +260,34 @@ async def _schedule_with_season_fallback(team_id: str, slug: str,
             if e["competitions"][0].get("status", {}).get("type", {}).get("completed", False)
         )
 
-    async def _walk_back(slug_to_try: str):
-        _add(await get_espn_team_schedule_raw(team_id, slug_to_try))
+    async def _walk_back(slug_to_try: str, tier: int):
+        _add(await get_espn_team_schedule_raw(team_id, slug_to_try), tier)
         offset = 0
         while offset <= max_seasons_back and _completed() < min_matches:
-            _add(await get_espn_team_schedule_raw(team_id, slug_to_try, season=current_year - offset))
+            _add(await get_espn_team_schedule_raw(team_id, slug_to_try, season=current_year - offset), tier)
             offset += 1
 
-    await _walk_back(slug)
+    await _walk_back(slug, tier=0)
 
     # Descend the pyramid one tier at a time (cap at 3 hops as a safety net —
     # the configured chains are at most 3 deep anyway, e.g. eng.1->eng.2->eng.3->eng.4).
     current_slug = slug
-    for _ in range(3):
+    for depth in range(1, 4):
         if _completed() >= min_matches:
             break
         feeder = PROMOTION_FEEDER_LEAGUE.get(current_slug)
         if not feeder:
             break
-        await _walk_back(feeder)
+        await _walk_back(feeder, tier=depth)
         current_slug = feeder
 
-    return merged
+    return merged, tier_by_id
 
 
 async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 10) -> list:
     """Fetch last N completed league matches for a team from ESPN."""
-    events = await _schedule_with_season_fallback(team_id, league_slug)
-    matches = _parse_events(events, team_id, comp_tag="league")
+    events, tier_by_id = await _schedule_with_season_fallback(team_id, league_slug)
+    matches = _parse_events(events, team_id, comp_tag="league", tier_by_id=tier_by_id)
     matches.sort(key=lambda x: x["date"], reverse=True)
     return matches[:n]
 
@@ -300,7 +311,8 @@ async def get_espn_team_all_matches(team_id: str, league_slug: str, n: int = 20)
     for tag, result in zip(tags, results):
         if isinstance(result, Exception):
             continue
-        all_matches.extend(_parse_events(result, team_id, comp_tag=tag))
+        events, tier_by_id = result
+        all_matches.extend(_parse_events(events, team_id, comp_tag=tag, tier_by_id=tier_by_id))
 
     # Deduplicate by fixture_id (some matches might appear in multiple feeds)
     seen = set()

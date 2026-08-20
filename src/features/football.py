@@ -23,6 +23,17 @@ from src.config import FOOTBALL_FORM_WINDOW, HOME_ADVANTAGE_FACTOR
 LEAGUE_AVG_GOALS = 1.35   # top European league average goals per team per game
 TOTAL_TEAMS      = 20     # default league size (PL, La Liga, etc.)
 
+# When a team's "form" comes from a weaker feeder league (see
+# fetcher._schedule_with_season_fallback — newly-promoted teams with no
+# current-tier history yet), their raw goals-for/against overstate how
+# they'll actually perform against stronger opposition: a side that hammered
+# second-tier defences doesn't score at the same rate against top-flight
+# ones, and concedes more than its second-tier record suggests. Discount
+# attack / inflate defence-conceded per tier of gap rather than trusting the
+# feeder-league numbers at face value.
+CROSS_TIER_ATTACK_DISCOUNT   = 0.85   # per tier gap
+CROSS_TIER_DEFENCE_INFLATION = 1.15   # per tier gap
+
 
 # ── Helper: points per game (momentum) ────────────────────────────────────────
 def _ppg(matches: list, n: int = 5) -> float:
@@ -122,6 +133,19 @@ def _rank_quality_factors(home_rank: int, away_rank: int,
     return home_factor, away_factor
 
 
+# ── Helper: cross-tier gap (feeder-league form discount) ─────────────────────
+def _avg_tier_offset(matches: list, n: int = 10) -> float:
+    """
+    Average tier_offset among the matches actually used for form (0 = same
+    competition, 1+ = pulled from a feeder league — see
+    fetcher._schedule_with_season_fallback). A team whose last 5 games are
+    entirely current-tier gets 0; one topped up from a lower division gets a
+    fractional-to-whole number reflecting how much of its "form" is borrowed.
+    """
+    vals = [m.get("tier_offset", 0) for m in matches[:n]]
+    return float(np.mean(vals)) if vals else 0.0
+
+
 # ── Helper: multi-window form average ────────────────────────────────────────
 def _weighted_avg(matches_all: list, key: str, w5: float = 0.5, w10: float = 0.5) -> float:
     """
@@ -183,6 +207,16 @@ def build_football_features(
     home_defence = home_avg_conceded / LEAGUE_AVG_GOALS
     away_attack  = away_avg_scored   / LEAGUE_AVG_GOALS
     away_defence = away_avg_conceded / LEAGUE_AVG_GOALS
+
+    # Discount ratings built from feeder-league form (newly-promoted teams) —
+    # otherwise a side that dominated a weaker division looks just as strong
+    # as a genuine top-flight team on paper.
+    home_tier_gap = _avg_tier_offset(h_src)
+    away_tier_gap = _avg_tier_offset(a_src)
+    home_attack  *= CROSS_TIER_ATTACK_DISCOUNT   ** home_tier_gap
+    home_defence *= CROSS_TIER_DEFENCE_INFLATION ** home_tier_gap
+    away_attack  *= CROSS_TIER_ATTACK_DISCOUNT   ** away_tier_gap
+    away_defence *= CROSS_TIER_DEFENCE_INFLATION ** away_tier_gap
 
     # ── 3. Momentum (PPG last 5 — all games, not venue-split) ─────────────
     home_ppg        = _ppg(home_matches, 5)
@@ -267,6 +301,8 @@ def build_football_features(
         "home_defence":         round(home_defence,   3),
         "away_attack":          round(away_attack,    3),
         "away_defence":         round(away_defence,   3),
+        "home_tier_gap":        round(home_tier_gap,  2),
+        "away_tier_gap":        round(away_tier_gap,  2),
         "home_ppg_last5":       round(home_ppg,       2),
         "away_ppg_last5":       round(away_ppg,       2),
         "home_momentum":        round(home_momentum,  3),

@@ -512,10 +512,16 @@ def _bias_sync(sport: str = "football") -> dict:
     global_cal = _calibrate_group(rows)
 
     # Per-league calibration (only when N >= 5)
+    # Normalize through ESPN_DISPLAY_TO_LEAGUE: rows are stored under ESPN's
+    # scoreboard display name (e.g. "English Premier League"), but callers
+    # look bias up by our short canonical key (e.g. "Premier League"). Without
+    # this, the lookup in predictor.py always misses and silently falls back
+    # to the global average — see get_all_football_predictions().
     from collections import defaultdict
+    from src.config import normalize_league_name
     by_league: dict = defaultdict(list)
     for r in rows:
-        lg = (r.get("predictions") or {}).get("league") or "Unknown"
+        lg = normalize_league_name((r.get("predictions") or {}).get("league") or "Unknown")
         by_league[lg].append(r)
 
     leagues = {lg: _calibrate_group(items)

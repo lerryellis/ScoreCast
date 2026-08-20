@@ -53,6 +53,38 @@ ESPN_FOOTBALL_LEAGUES = {
     "Ghana Premier League": "gha.1",
 }
 
+# ESPN's scoreboard endpoint returns its own display name for each league
+# (e.g. "English Premier League", "Spanish LALIGA") which is what gets stored
+# on every fixture/prediction row — NOT the short key above. Bias calibration
+# groups by that stored name, so anything doing a per-league bias lookup by
+# the short key (e.g. "Premier League") must normalize through this map first,
+# or it silently misses and falls back to the global average. Verified against
+# a live ESPN scoreboard call per league (2026-08-21).
+ESPN_LEAGUE_DISPLAY_NAME = {
+    "Premier League":       "English Premier League",
+    "Championship":         "English League Championship",
+    "La Liga":              "Spanish LALIGA",
+    "Serie A":              "Italian Serie A",
+    "Bundesliga":           "German Bundesliga",
+    "Ligue 1":              "French Ligue 1",
+    "Champions League":     "UEFA Champions League",
+    "Ghana Premier League": "Ghanaian Premier League",
+}
+
+# Reverse of the above — maps ESPN's stored display name back to our short
+# canonical key. Used to normalize league names when grouping calibration
+# data, so historical rows (stored under ESPN's name) match the short key
+# that predictor.py looks bias up by.
+ESPN_DISPLAY_TO_LEAGUE = {v: k for k, v in ESPN_LEAGUE_DISPLAY_NAME.items()}
+
+
+def normalize_league_name(name: str) -> str:
+    """Map an ESPN display name (as stored on fixtures/predictions) back to
+    our canonical short league key, if known. Falls through unchanged for
+    names we don't have a mapping for (e.g. cup competitions, "Unknown")."""
+    return ESPN_DISPLAY_TO_LEAGUE.get(name, name)
+
+
 # Map cup slugs to their parent league — for form data, use league not cup results
 CUP_TO_LEAGUE = {
     "eng.fa":              "eng.1",
@@ -85,6 +117,13 @@ ESPN_INTERNATIONAL_LEAGUES = {
     "UEFA Nations League":      "uefa.nations",
     "International Friendlies": "fifa.friendly",
 }
+
+# Friendly-competition slugs to exclude when building "current form" and H2H
+# for national teams — friendlies are squad-rotation/experimental affairs, so
+# they're treated as preseason and dropped rather than counted as real
+# results. Kept in ESPN_INTERNATIONAL_LEAGUES/dropdown since they're still a
+# real, schedulable competition — just not a form/H2H signal.
+FRIENDLY_COMP_SLUGS = {"fifa.friendly"}
 
 # Broader set used only for building a national team's match history + H2H —
 # includes the major continental tournaments and every confederation's WC

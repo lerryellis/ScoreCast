@@ -12,7 +12,7 @@ uvicorn src.api:app --reload --port 8000   # dev server → localhost:8000
 
 ## Architecture
 
-BetScore is a sports score prediction app covering football/soccer and NBA basketball.
+ScoreCast is a sports score prediction app covering football/soccer and NBA basketball.
 
 **Backend (FastAPI — `src/`)**
 - `api.py` — FastAPI app, serves `index.html` + exposes `/api/predictions/football` and `/api/predictions/basketball`

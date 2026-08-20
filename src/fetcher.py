@@ -204,9 +204,55 @@ def _parse_events(events: list, team_id: str, comp_tag: str = "league",
     return matches
 
 
+# Minimum completed matches we want before we stop walking back to prior
+# seasons for "recent form" — not tied to the pool size `n` callers request,
+# since a season only has ~38 games and using n (e.g. 38) as the floor would
+# keep pulling in last season's results for nearly the whole campaign.
+MIN_FORM_SAMPLE = 5
+
+
+async def _schedule_with_season_fallback(team_id: str, slug: str,
+                                          min_matches: int = MIN_FORM_SAMPLE,
+                                          max_seasons_back: int = 2) -> list:
+    """Fetch a team's raw ESPN schedule for one competition slug, falling back
+    to prior seasons if the current one doesn't have enough completed matches
+    yet — e.g. on a season's opening day, before ESPN has published this
+    year's team-schedule data (verified: querying with no season param, or
+    the brand-new season number, both return 0 events at kickoff).
+
+    Returns raw ESPN event dicts, deduped by id — not parsed/filtered.
+    """
+    from datetime import date as _date
+    current_year = _date.today().year
+
+    seen_ids = set()
+    merged = []
+
+    def _add(events):
+        for e in events:
+            if e["id"] not in seen_ids:
+                seen_ids.add(e["id"])
+                merged.append(e)
+
+    _add(await get_espn_team_schedule_raw(team_id, slug))
+
+    offset = 0
+    while offset <= max_seasons_back:
+        completed = sum(
+            1 for e in merged
+            if e["competitions"][0].get("status", {}).get("type", {}).get("completed", False)
+        )
+        if completed >= min_matches:
+            break
+        _add(await get_espn_team_schedule_raw(team_id, slug, season=current_year - offset))
+        offset += 1
+
+    return merged
+
+
 async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 10) -> list:
     """Fetch last N completed league matches for a team from ESPN."""
-    events = await get_espn_team_schedule_raw(team_id, league_slug)
+    events = await _schedule_with_season_fallback(team_id, league_slug)
     matches = _parse_events(events, team_id, comp_tag="league")
     matches.sort(key=lambda x: x["date"], reverse=True)
     return matches[:n]
@@ -220,9 +266,9 @@ async def get_espn_team_all_matches(team_id: str, league_slug: str, n: int = 20)
     from src.config import ESPN_CUP_SLUGS
     cup_slugs = ESPN_CUP_SLUGS.get(league_slug, [])
 
-    tasks = [get_espn_team_schedule_raw(team_id, league_slug)]
+    tasks = [_schedule_with_season_fallback(team_id, league_slug)]
     for slug in cup_slugs:
-        tasks.append(get_espn_team_schedule_raw(team_id, slug))
+        tasks.append(_schedule_with_season_fallback(team_id, slug))
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -248,15 +294,18 @@ async def get_espn_team_all_matches(team_id: str, league_slug: str, n: int = 20)
 async def get_intl_team_all_matches(team_id: str, n: int = 20) -> list:
     """
     Fetch completed matches for a national team across ALL international competitions.
-    Checks World Cup, qualifiers, Nations League, friendlies.
+    Checks World Cup, qualifiers, Nations League — excludes friendlies (see
+    FRIENDLY_COMP_SLUGS: experimental lineups/squad rotation make them a poor
+    signal for "current form", so they're treated like preseason and dropped).
     """
-    from src.config import INTERNATIONAL_COMP_SLUGS
+    from src.config import INTERNATIONAL_COMP_SLUGS, FRIENDLY_COMP_SLUGS
 
-    tasks = [get_espn_team_schedule_raw(team_id, slug) for slug in INTERNATIONAL_COMP_SLUGS]
+    comp_slugs = [s for s in INTERNATIONAL_COMP_SLUGS if s not in FRIENDLY_COMP_SLUGS]
+    tasks = [get_espn_team_schedule_raw(team_id, slug) for slug in comp_slugs]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_matches = []
-    for slug, result in zip(INTERNATIONAL_COMP_SLUGS, results):
+    for slug, result in zip(comp_slugs, results):
         if isinstance(result, Exception):
             continue
         all_matches.extend(_parse_events(result, team_id, comp_tag=slug))
@@ -279,10 +328,15 @@ async def get_intl_head_to_head(home_id: str, away_id: str, last: int = 5,
     ESPN's team-schedule endpoint only returns one season at a time, and national
     teams rarely meet twice in the same season — so we walk back several seasons
     (querying every international competition) until we have `last` meetings.
+
+    Friendlies between the two teams are excluded (treated as preseason, same
+    as get_intl_team_all_matches) — squad rotation/experimental lineups in
+    friendlies aren't representative of how the teams actually play each other.
     """
-    from src.config import INTERNATIONAL_COMP_SLUGS
+    from src.config import INTERNATIONAL_COMP_SLUGS, FRIENDLY_COMP_SLUGS
     from datetime import date as _date
 
+    comp_slugs = [s for s in INTERNATIONAL_COMP_SLUGS if s not in FRIENDLY_COMP_SLUGS]
     current_season = _date.today().year
     h2h: list = []
     seen_events: set = set()
@@ -291,13 +345,13 @@ async def get_intl_head_to_head(home_id: str, away_id: str, last: int = 5,
         season = current_season - offset
         # Fetch every competition for both teams for this season, concurrently.
         home_tasks = [get_espn_team_schedule_raw(home_id, slug, season=season)
-                      for slug in INTERNATIONAL_COMP_SLUGS]
+                      for slug in comp_slugs]
         away_tasks = [get_espn_team_schedule_raw(away_id, slug, season=season)
-                      for slug in INTERNATIONAL_COMP_SLUGS]
+                      for slug in comp_slugs]
         all_results = await asyncio.gather(*(home_tasks + away_tasks),
                                            return_exceptions=True)
-        home_results = all_results[:len(INTERNATIONAL_COMP_SLUGS)]
-        away_results = all_results[len(INTERNATIONAL_COMP_SLUGS):]
+        home_results = all_results[:len(comp_slugs)]
+        away_results = all_results[len(comp_slugs):]
 
         away_event_ids = set()
         for result in away_results:

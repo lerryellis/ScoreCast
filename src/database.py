@@ -444,13 +444,18 @@ def _calibrate_group(items: list) -> dict:
     n = len(items)
 
     # ── Goal bias ──────────────────────────────────────────────────────────
+    # Clamp widened from 0.70-1.30: real data showed away_bias pegged at the
+    # old 1.30 ceiling in most leagues, meaning the true correction needed was
+    # larger than the clamp allowed — the model had learned the right number
+    # but the code was refusing to apply it. 0.60-1.75 gives it room while
+    # still guarding against a single bad/small sample swinging wildly.
     s_ah = sum(r["actual_home"] for r in items)
     s_aa = sum(r["actual_away"] for r in items)
     p    = lambda r, k: (r.get("predictions") or {}).get(k, 0) or 0
     s_ph = sum(p(r, "predicted_home") for r in items)
     s_pa = sum(p(r, "predicted_away") for r in items)
-    home_bias = _clamp(s_ah / s_ph, 0.70, 1.30) if s_ph > 0 else 1.0
-    away_bias = _clamp(s_aa / s_pa, 0.70, 1.30) if s_pa > 0 else 1.0
+    home_bias = _clamp(s_ah / s_ph, 0.60, 1.75) if s_ph > 0 else 1.0
+    away_bias = _clamp(s_aa / s_pa, 0.60, 1.75) if s_pa > 0 else 1.0
 
     # ── Home advantage: actual vs predicted home-win rate ──────────────────
     actual_hw  = sum(1 for r in items if r["actual_home"] > r["actual_away"])

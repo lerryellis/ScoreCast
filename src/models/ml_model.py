@@ -38,16 +38,28 @@ BASKETBALL_FEATURES = [
     "confidence",
 ]
 
-XGB_PARAMS = dict(
+_BASE_XGB_PARAMS = dict(
     n_estimators=300,
     learning_rate=0.05,
     max_depth=4,
     subsample=0.8,
     colsample_bytree=0.8,
-    objective="count:poisson",   # models Poisson rate, ideal for goal/point counts
     random_state=42,
     verbosity=0,
 )
+
+# Football goals are small counts (0-5ish) — count:poisson's log-link models
+# the scoring rate well and stays numerically stable at that scale.
+FOOTBALL_XGB_PARAMS = {**_BASE_XGB_PARAMS, "objective": "count:poisson"}
+
+# Basketball scores are ~70-160 points, not small counts. Poisson's log-link
+# was overflowing at this scale (cross-validated MAE came back as ~1e21
+# instead of a sane point value) — a plain squared-error regression is the
+# right objective for continuous-scale scores like this.
+BASKETBALL_XGB_PARAMS = {**_BASE_XGB_PARAMS, "objective": "reg:squarederror"}
+
+# Kept for backwards compatibility with anything importing XGB_PARAMS directly.
+XGB_PARAMS = FOOTBALL_XGB_PARAMS
 
 
 class SportsMLModel:
@@ -117,6 +129,8 @@ class SportsMLModel:
         from sklearn.model_selection import cross_val_score
         from datetime import datetime
 
+        xgb_params = FOOTBALL_XGB_PARAMS if self.sport == "football" else BASKETBALL_XGB_PARAMS
+
         # Build league encoder
         leagues: dict = {}
         for r in rows:
@@ -144,19 +158,19 @@ class SportsMLModel:
         y_home = np.array(y_home, dtype=np.float32)
         y_away = np.array(y_away, dtype=np.float32)
 
-        self.home_model = XGBRegressor(**XGB_PARAMS)
-        self.away_model = XGBRegressor(**XGB_PARAMS)
+        self.home_model = XGBRegressor(**xgb_params)
+        self.away_model = XGBRegressor(**xgb_params)
         self.home_model.fit(X, y_home)
         self.away_model.fit(X, y_away)
 
-        # Cross-validated MAE (Poisson objective → output is expected value)
+        # Cross-validated MAE (output is expected value regardless of objective)
         cv_folds = min(5, max(2, n // 20))
         home_mae = float(-cross_val_score(
-            XGBRegressor(**XGB_PARAMS), X, y_home,
+            XGBRegressor(**xgb_params), X, y_home,
             cv=cv_folds, scoring="neg_mean_absolute_error"
         ).mean())
         away_mae = float(-cross_val_score(
-            XGBRegressor(**XGB_PARAMS), X, y_away,
+            XGBRegressor(**xgb_params), X, y_away,
             cv=cv_folds, scoring="neg_mean_absolute_error"
         ).mean())
 

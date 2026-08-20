@@ -85,13 +85,20 @@ def normalize_league_name(name: str) -> str:
     return ESPN_DISPLAY_TO_LEAGUE.get(name, name)
 
 
-# Second-tier feeder league for each top flight — used to pull "recent form"
-# for newly-promoted teams, who have no match history under the top-flight
-# slug yet. Verified live against ESPN scoreboard (2026-08):
-#   eng.2 "English League Championship", esp.2 "Spanish LALIGA 2",
-#   ita.2 "Italian Serie B", ger.2 "German 2. Bundesliga", fra.2 "French Ligue 2"
+# Feeder league one tier down, for every division we track — used to pull
+# "recent form" for a newly-promoted team with no match history yet at its
+# current level. Chains multiple hops (e.g. eng.1 -> eng.2 -> eng.3), so a
+# team promoted two divisions in one close (League One -> Championship, then
+# Championship -> Premier League the year after) still resolves correctly —
+# _schedule_with_season_fallback walks this chain until it finds enough
+# matches or runs out of tiers. Verified live against ESPN scoreboard
+# (2026-08): eng.2 "English League Championship", eng.3 "English League One",
+# eng.4 "English League Two", esp.2 "Spanish LALIGA 2", ita.2 "Italian Serie B",
+# ger.2 "German 2. Bundesliga", fra.2 "French Ligue 2".
 PROMOTION_FEEDER_LEAGUE = {
     "eng.1": "eng.2",
+    "eng.2": "eng.3",
+    "eng.3": "eng.4",
     "esp.1": "esp.2",
     "ita.1": "ita.2",
     "ger.1": "ger.2",

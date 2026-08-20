@@ -221,9 +221,12 @@ async def _schedule_with_season_fallback(team_id: str, slug: str,
     the brand-new season number, both return 0 events at kickoff).
 
     If the team still has no history after that (newly promoted, e.g.
-    Coventry into the Premier League), fall back to the slug's second-tier
-    feeder league via PROMOTION_FEEDER_LEAGUE — their actual recent form,
-    just one division down, beats showing no data at all.
+    Coventry into the Premier League), fall back down the division pyramid
+    one tier at a time via PROMOTION_FEEDER_LEAGUE — a team that jumped two
+    divisions in one close (e.g. League One straight into the Championship)
+    keeps descending (eng.2 -> eng.3 -> eng.4) until it finds real matches or
+    the pyramid runs out. Their actual recent form, a tier or two down, beats
+    showing no data at all.
 
     Returns raw ESPN event dicts, deduped by id — not parsed/filtered.
     """
@@ -255,9 +258,17 @@ async def _schedule_with_season_fallback(team_id: str, slug: str,
 
     await _walk_back(slug)
 
-    feeder = PROMOTION_FEEDER_LEAGUE.get(slug)
-    if feeder and _completed() < min_matches:
+    # Descend the pyramid one tier at a time (cap at 3 hops as a safety net —
+    # the configured chains are at most 3 deep anyway, e.g. eng.1->eng.2->eng.3->eng.4).
+    current_slug = slug
+    for _ in range(3):
+        if _completed() >= min_matches:
+            break
+        feeder = PROMOTION_FEEDER_LEAGUE.get(current_slug)
+        if not feeder:
+            break
         await _walk_back(feeder)
+        current_slug = feeder
 
     return merged
 

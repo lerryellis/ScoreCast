@@ -220,9 +220,15 @@ async def _schedule_with_season_fallback(team_id: str, slug: str,
     year's team-schedule data (verified: querying with no season param, or
     the brand-new season number, both return 0 events at kickoff).
 
+    If the team still has no history after that (newly promoted, e.g.
+    Coventry into the Premier League), fall back to the slug's second-tier
+    feeder league via PROMOTION_FEEDER_LEAGUE — their actual recent form,
+    just one division down, beats showing no data at all.
+
     Returns raw ESPN event dicts, deduped by id — not parsed/filtered.
     """
     from datetime import date as _date
+    from src.config import PROMOTION_FEEDER_LEAGUE
     current_year = _date.today().year
 
     seen_ids = set()
@@ -234,18 +240,24 @@ async def _schedule_with_season_fallback(team_id: str, slug: str,
                 seen_ids.add(e["id"])
                 merged.append(e)
 
-    _add(await get_espn_team_schedule_raw(team_id, slug))
-
-    offset = 0
-    while offset <= max_seasons_back:
-        completed = sum(
+    def _completed():
+        return sum(
             1 for e in merged
             if e["competitions"][0].get("status", {}).get("type", {}).get("completed", False)
         )
-        if completed >= min_matches:
-            break
-        _add(await get_espn_team_schedule_raw(team_id, slug, season=current_year - offset))
-        offset += 1
+
+    async def _walk_back(slug_to_try: str):
+        _add(await get_espn_team_schedule_raw(team_id, slug_to_try))
+        offset = 0
+        while offset <= max_seasons_back and _completed() < min_matches:
+            _add(await get_espn_team_schedule_raw(team_id, slug_to_try, season=current_year - offset))
+            offset += 1
+
+    await _walk_back(slug)
+
+    feeder = PROMOTION_FEEDER_LEAGUE.get(slug)
+    if feeder and _completed() < min_matches:
+        await _walk_back(feeder)
 
     return merged
 

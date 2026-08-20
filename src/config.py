@@ -85,6 +85,19 @@ def normalize_league_name(name: str) -> str:
     return ESPN_DISPLAY_TO_LEAGUE.get(name, name)
 
 
+# Second-tier feeder league for each top flight — used to pull "recent form"
+# for newly-promoted teams, who have no match history under the top-flight
+# slug yet. Verified live against ESPN scoreboard (2026-08):
+#   eng.2 "English League Championship", esp.2 "Spanish LALIGA 2",
+#   ita.2 "Italian Serie B", ger.2 "German 2. Bundesliga", fra.2 "French Ligue 2"
+PROMOTION_FEEDER_LEAGUE = {
+    "eng.1": "eng.2",
+    "esp.1": "esp.2",
+    "ita.1": "ita.2",
+    "ger.1": "ger.2",
+    "fra.1": "fra.2",
+}
+
 # Map cup slugs to their parent league — for form data, use league not cup results
 CUP_TO_LEAGUE = {
     "eng.fa":              "eng.1",

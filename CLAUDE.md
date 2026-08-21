@@ -184,6 +184,8 @@ Early in a season, or for a newly-promoted team, ESPN's team-schedule endpoint r
 
 International club friendlies (`fifa.friendly`) are deliberately excluded from `get_intl_team_all_matches`/`get_intl_head_to_head` (`FRIENDLY_COMP_SLUGS`) — squad-rotation friendlies, including ones between the two teams being predicted, aren't representative form/H2H signal.
 
+**NBA has the same season-boundary bug, fixed the same way, but with an inverted season-numbering convention.** `get_espn_nba_team_games()` queries with no `season` param, which returns the *upcoming* season's fixtures (all `STATUS_SCHEDULED`, zero completed) once ESPN's "current season" default flips ahead of opening night — verified live for the off-season/preseason window. Fix walks back seasons the same way, **but**: ESPN's NBA `season` param is the year the season *ends* (`season=2026` = the 2025-26 season) — the opposite of the soccer endpoints, where `season=2025` means the 2025-26 season (year it *starts*). Verified live for both conventions before writing the fix. `date.today().year` works directly as the first fallback candidate under NBA's convention, walking back up to 3 seasons. No promotion/relegation concept in the NBA, so no feeder-league chain needed here — just the season walkback.
+
 ## Cross-tier form discount (features/football.py)
 
 A promoted team's feeder-league scoring stats overstate how it'll perform against stronger opposition (verified live: SV Elversberg's 2. Bundesliga form made them look like a title-chasing attack against Bayer Leverkusen — 70.5% predicted win probability before this fix). `CROSS_TIER_ATTACK_DISCOUNT` (0.85) / `CROSS_TIER_DEFENCE_INFLATION` (1.15) are applied per tier of `tier_offset` gap before the ratings feed the Poisson lambda.

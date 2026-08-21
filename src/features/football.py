@@ -19,6 +19,7 @@ from src.features.base import (
     days_since_last_match, rest_factor, h2h_avg_scores, injury_impact_factor
 )
 from src.config import FOOTBALL_FORM_WINDOW, HOME_ADVANTAGE_FACTOR
+from src.models.elo import elo_to_attack_ratio, elo_to_defence_ratio, elo_blend_weight
 
 LEAGUE_AVG_GOALS = 1.35   # top European league average goals per team per game
 TOTAL_TEAMS      = 20     # default league size (PL, La Liga, etc.)
@@ -175,6 +176,8 @@ def build_football_features(
     total_teams:       int  = TOTAL_TEAMS,
     home_all_matches:  list = None,
     away_all_matches:  list = None,
+    home_elo:          dict = None,
+    away_elo:          dict = None,
 ) -> dict:
     """
     Returns a feature dict consumed by the football prediction model.
@@ -217,6 +220,30 @@ def build_football_features(
     home_defence *= CROSS_TIER_DEFENCE_INFLATION ** home_tier_gap
     away_attack  *= CROSS_TIER_ATTACK_DISCOUNT   ** away_tier_gap
     away_defence *= CROSS_TIER_DEFENCE_INFLATION ** away_tier_gap
+
+    # ── 2b. Blend with Elo ratings (equal weight once Elo has enough history) ──
+    # Elo is an independent signal — persists across seasons/leagues, so it
+    # already "knows" a newly-promoted team is weaker without needing the
+    # tier-gap discount above. See src/models/elo.py. Blended with the
+    # form-based ratings computed above (same scale, 1.0 = league average),
+    # at equal (50/50) weight — but only once a team has actually
+    # accumulated enough resolved matches for its rating to mean something.
+    # Every team starts at a neutral 1500/1500; blending that in at full
+    # strength from game 1 would just dilute the form signal toward neutral
+    # for everyone, not add information. elo_blend_weight ramps 0 -> 0.5 over
+    # RAMP_GAMES matches so the "equal weight" only applies once it's earned.
+    home_attack_elo  = (home_elo or {}).get("attack_elo")
+    home_defence_elo = (home_elo or {}).get("defence_elo")
+    away_attack_elo  = (away_elo or {}).get("attack_elo")
+    away_defence_elo = (away_elo or {}).get("defence_elo")
+    if home_attack_elo is not None:
+        w = elo_blend_weight((home_elo or {}).get("games_played", 0))
+        home_attack  = (1 - w) * home_attack  + w * elo_to_attack_ratio(home_attack_elo)
+        home_defence = (1 - w) * home_defence + w * elo_to_defence_ratio(home_defence_elo)
+    if away_attack_elo is not None:
+        w = elo_blend_weight((away_elo or {}).get("games_played", 0))
+        away_attack  = (1 - w) * away_attack  + w * elo_to_attack_ratio(away_attack_elo)
+        away_defence = (1 - w) * away_defence + w * elo_to_defence_ratio(away_defence_elo)
 
     # ── 3. Momentum (PPG last 5 — all games, not venue-split) ─────────────
     home_ppg        = _ppg(home_matches, 5)
@@ -303,6 +330,10 @@ def build_football_features(
         "away_defence":         round(away_defence,   3),
         "home_tier_gap":        round(home_tier_gap,  2),
         "away_tier_gap":        round(away_tier_gap,  2),
+        "home_attack_elo":      round(home_attack_elo, 1)  if home_attack_elo  is not None else None,
+        "home_defence_elo":     round(home_defence_elo, 1) if home_defence_elo is not None else None,
+        "away_attack_elo":      round(away_attack_elo, 1)  if away_attack_elo  is not None else None,
+        "away_defence_elo":     round(away_defence_elo, 1) if away_defence_elo is not None else None,
         "home_ppg_last5":       round(home_ppg,       2),
         "away_ppg_last5":       round(away_ppg,       2),
         "home_momentum":        round(home_momentum,  3),

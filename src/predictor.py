@@ -40,13 +40,17 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
 
     # League matches for form/attack/defence ratings
     # All-competition matches for rest/congestion (includes cups)
-    home_matches, away_matches, home_all, away_all, h2h = await asyncio.gather(
+    from src.database import get_team_ratings
+    home_matches, away_matches, home_all, away_all, h2h, elo_ratings = await asyncio.gather(
         get_espn_team_match_history(home_id, form_slug, n=38),
         get_espn_team_match_history(away_id, form_slug, n=38),
         get_espn_team_all_matches(home_id, form_slug, n=20),
         get_espn_team_all_matches(away_id, form_slug, n=20),
         get_espn_head_to_head(home_id, away_id, league_slug),
+        get_team_ratings([home_id, away_id], form_slug),
     )
+    home_elo = elo_ratings.get(str(home_id))
+    away_elo = elo_ratings.get(str(away_id))
 
     standings = standings or {}
     home_entry = standings.get(str(home_id), {})
@@ -64,6 +68,7 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
         fixture["home_team"], fixture["away_team"],
         home_rank=home_rank, away_rank=away_rank,
         home_all_matches=home_all, away_all_matches=away_all,
+        home_elo=home_elo, away_elo=away_elo,
     )
     # Apply goal bias calibration from historical prediction errors
     # This single multiplier captures all systematic over/under-prediction

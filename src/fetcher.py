@@ -148,6 +148,37 @@ async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] 
     return fixtures
 
 
+async def get_espn_match_stats(event_id: str, league_slug: str) -> dict:
+    """
+    Fetch post-match team statistics (shots, shots on target, tackles,
+    interceptions, clearances, saves, etc.) for a completed fixture — used
+    as extra Elo-rating update input beyond just the scoreline (see
+    src/models/elo.py). Returns {} if unavailable (stats not published for
+    this match, or the match hasn't been played) — callers fall back to
+    goals-only in that case.
+
+    Returns {"home": {stat_name: value, ...}, "away": {...}}.
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.get(
+                f"{ESPN_SOCCER_BASE}/{league_slug}/summary",
+                params={"event": event_id},
+                timeout=15,
+            )
+            r.raise_for_status()
+            data = r.json()
+        except Exception:
+            return {}
+
+    out = {}
+    for t in data.get("boxscore", {}).get("teams", []):
+        stats = {s["name"]: s.get("value") for s in t.get("statistics", []) if s.get("name")}
+        if stats:
+            out[t.get("homeAway", "")] = stats
+    return out
+
+
 async def get_espn_team_schedule_raw(team_id: str, league_slug: str, season: int = None) -> list:
     """Return all ESPN events for a team in a given season (raw event dicts)."""
     params = {}

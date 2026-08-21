@@ -47,6 +47,8 @@ def _save_prediction_sync(pred: dict) -> None:
         "league_slug":       pred.get("league_slug", ""),
         "home_team":         pred.get("home_team", ""),
         "away_team":         pred.get("away_team", ""),
+        "home_team_id":      str(pred["home_team_id"]) if pred.get("home_team_id") else None,
+        "away_team_id":      str(pred["away_team_id"]) if pred.get("away_team_id") else None,
         "predicted_home":    p.get("predicted_home", 0),
         "predicted_away":    p.get("predicted_away", 0),
         "predicted_home_ht": p.get("predicted_home_ht"),
@@ -221,11 +223,17 @@ async def save_basketball_predictions(preds: list) -> None:
 
 # ── Resolve predictions ────────────────────────────────────────────────────────
 
-def _resolve_sync(unresolved: list, fd_by_date: dict) -> int:
-    """Match unresolved predictions to actual scores and write results."""
+def _resolve_sync(unresolved: list, fd_by_date: dict) -> tuple:
+    """Match unresolved predictions to actual scores and write results.
+
+    Returns (count, resolved_matches) — resolved_matches carries what's
+    needed to update Elo ratings for each newly-resolved match (done
+    separately, async, back in resolve_predictions — see there for why).
+    """
     from src.fetcher import match_ht_to_fixture
     client = _get_client()
     count  = 0
+    resolved_matches = []
 
     for pred in unresolved:
         match_date = pred["match_date"]
@@ -278,10 +286,21 @@ def _resolve_sync(unresolved: list, fd_by_date: dict) -> int:
                 ignore_duplicates=True,
             ).execute()
             count += 1
+            if pred.get("home_team_id") and pred.get("away_team_id"):
+                resolved_matches.append({
+                    "fixture_id":   pred["fixture_id"],
+                    "league_slug":  pred.get("league_slug") or "",
+                    "home_team_id": pred["home_team_id"],
+                    "away_team_id": pred["away_team_id"],
+                    "home_team":    pred["home_team"],
+                    "away_team":    pred["away_team"],
+                    "actual_home":  ah,
+                    "actual_away":  aa,
+                })
         except Exception as e:
             print(f"[DB resolve error] {e}")
 
-    return count
+    return count, resolved_matches
 
 
 async def resolve_predictions() -> int:
@@ -329,7 +348,132 @@ async def resolve_predictions() -> int:
     )
     fd_by_date = {d: fd for d, fd in zip(by_date.keys(), fd_results)}
 
-    return await asyncio.to_thread(_resolve_sync, unresolved, fd_by_date)
+    count, resolved_matches = await asyncio.to_thread(_resolve_sync, unresolved, fd_by_date)
+
+    # Elo updates need async ESPN calls + async DB reads, so they run here
+    # rather than inside _resolve_sync (which is a plain thread-pool function).
+    # Best-effort: a failed rating update shouldn't block resolving predictions.
+    if resolved_matches:
+        from src.fetcher import get_espn_match_stats
+        for m in resolved_matches:
+            try:
+                stats = await get_espn_match_stats(m["fixture_id"], m["league_slug"] or "eng.1")
+                await update_ratings_after_match(
+                    m["home_team_id"], m["home_team"],
+                    m["away_team_id"], m["away_team"],
+                    m["league_slug"] or "eng.1",
+                    m["actual_home"], m["actual_away"],
+                    home_stats=stats.get("home"), away_stats=stats.get("away"),
+                )
+            except Exception as e:
+                print(f"[Elo update error] {e}")
+
+    return count
+
+
+# ── Team Elo ratings ─────────────────────────────────────────────────────────
+#
+# Attack/defence Elo per team — an independent, cross-season/cross-league
+# signal blended 50/50 with the form-based Poisson features in
+# features/football.py. See src/models/elo.py for the ratings math.
+
+def _fetch_team_ratings_sync(team_ids: list, sport: str) -> list:
+    client = _get_client()
+    try:
+        return (
+            client.table("team_ratings")
+                  .select("*")
+                  .in_("team_id", [str(t) for t in team_ids])
+                  .eq("sport", sport)
+                  .execute()
+        ).data or []
+    except Exception:
+        return []   # table not created yet — run supabase_schema.sql
+
+
+async def get_team_ratings(team_ids: list, league_slug: str, sport: str = "football") -> dict:
+    """
+    Fetch current attack/defence Elo ratings for a set of teams. Any team
+    with no rating on file yet starts at the neutral baseline. Any team
+    whose rating is on file under a *different* league_slug than the one
+    passed in has been promoted/relegated since we last saw them — apply
+    the one-time division-change seed adjustment (see
+    elo.seed_rating_for_promotion) rather than starting them over.
+    """
+    from src.models.elo import BASELINE_ELO, seed_rating_for_promotion
+
+    if not SUPABASE_URL or not SUPABASE_KEY or not team_ids:
+        return {str(t): {"attack_elo": BASELINE_ELO, "defence_elo": BASELINE_ELO, "games_played": 0}
+                for t in team_ids}
+
+    rows = await asyncio.to_thread(_fetch_team_ratings_sync, team_ids, sport)
+    by_id = {r["team_id"]: r for r in rows}
+
+    result = {}
+    for tid in team_ids:
+        tid = str(tid)
+        row = by_id.get(tid)
+        if not row:
+            result[tid] = {"attack_elo": BASELINE_ELO, "defence_elo": BASELINE_ELO, "games_played": 0}
+            continue
+        attack_elo, defence_elo = row["attack_elo"], row["defence_elo"]
+        if row.get("league_slug") and row["league_slug"] != league_slug:
+            attack_elo, defence_elo = seed_rating_for_promotion(
+                attack_elo, defence_elo, row["league_slug"], league_slug
+            )
+        result[tid] = {
+            "attack_elo":   attack_elo,
+            "defence_elo":  defence_elo,
+            "games_played": row.get("games_played", 0),
+        }
+    return result
+
+
+def _upsert_team_rating_sync(team_id: str, team_name: str, league_slug: str,
+                              attack_elo: float, defence_elo: float,
+                              games_played: int, sport: str) -> None:
+    client = _get_client()
+    record = {
+        "team_id":      str(team_id),
+        "team_name":    team_name,
+        "league_slug":  league_slug,
+        "sport":        sport,
+        "attack_elo":   round(attack_elo, 2),
+        "defence_elo":  round(defence_elo, 2),
+        "games_played": games_played,
+    }
+    try:
+        client.table("team_ratings").upsert(record, on_conflict="team_id").execute()
+    except Exception as e:
+        print(f"[Elo save error] {e}")
+
+
+async def update_ratings_after_match(home_id: str, home_name: str,
+                                      away_id: str, away_name: str,
+                                      league_slug: str,
+                                      actual_home: int, actual_away: int,
+                                      home_stats: dict = None, away_stats: dict = None,
+                                      sport: str = "football") -> None:
+    """Update both teams' Elo ratings after one resolved match."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    from src.models.elo import update_ratings
+
+    ratings = await get_team_ratings([home_id, away_id], league_slug, sport=sport)
+    h = ratings[str(home_id)]
+    a = ratings[str(away_id)]
+
+    new_h_attack, new_h_defence, new_a_attack, new_a_defence = update_ratings(
+        h["attack_elo"], h["defence_elo"], a["attack_elo"], a["defence_elo"],
+        actual_home, actual_away, home_stats, away_stats,
+    )
+
+    await asyncio.gather(
+        asyncio.to_thread(_upsert_team_rating_sync, home_id, home_name, league_slug,
+                           new_h_attack, new_h_defence, h["games_played"] + 1, sport),
+        asyncio.to_thread(_upsert_team_rating_sync, away_id, away_name, league_slug,
+                           new_a_attack, new_a_defence, a["games_played"] + 1, sport),
+    )
 
 
 # ── Scorecard ──────────────────────────────────────────────────────────────────

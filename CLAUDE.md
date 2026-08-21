@@ -17,7 +17,7 @@ ScoreCast is a sports score prediction app covering football/soccer and NBA bask
 **Backend (FastAPI — `src/`)**
 - `api.py` — FastAPI app, serves `index.html` + exposes `/api/predictions/football` and `/api/predictions/basketball`, plus admin endpoints (`/api/admin/resolve`, `/api/admin/train`)
 - `predictor.py` — orchestrates: fixture → features → model → prediction dict. Also fetches Elo ratings and attaches `home_ratings`/`away_ratings` (see Team Elo Ratings below)
-- `fetcher.py` — async HTTP calls to **ESPN's free public API** (primary source for football — fixtures, standings, team schedules, match stats) and `nba_api` package (basketball). `football-data.org` is used as a secondary source for half-time scores during resolution
+- `fetcher.py` — async HTTP calls to **ESPN's free public API** (primary and, as of this writing, only source for football — fixtures, standings, team schedules, match stats, and result resolution; see Data Sources below for why `football-data.org` was dropped) and `nba_api` package (basketball)
 - `database.py` — Supabase persistence layer: saves predictions, resolves them against actual results, computes bias calibration, and maintains Elo ratings (see below)
 - `config.py` — API keys, league IDs/slugs, model constants, league-name normalization, promotion/feeder-league chains
 
@@ -160,7 +160,7 @@ Asymmetric by design — promoted teams historically regress harder than relegat
 **Football's primary source is ESPN's free public API** (`site.api.espn.com/apis/site/v2/sports/soccer/...`), not api-football.com. This matters because:
 - api-football.com's **free tier cannot see the current season** — verified live, it errors with "Free plans do not have access to this season, try from 2022 to 2024." It's effectively unusable for live predictions on the free plan.
 - ESPN's API needs no key and has no such restriction; it's used for fixtures, standings, team schedules/history, head-to-head, and post-match statistics (shots, tackles, interceptions, possession — used by the Elo system).
-- `football-data.org` is still used as a secondary source, specifically for half-time scores during result resolution (`get_football_data_ht_scores`).
+- `football-data.org` is **no longer used** — its account was found disabled (`403 "Your account has been disabled"`, verified live across every competition, not a rate limit) which had silently stopped `resolve_predictions()` from resolving anything at all for some time (blocking the accuracy scorecard, bias calibration, and Elo alike, since none of them ever saw a real outcome). Replaced with `fetcher.get_espn_fixture_result()` — one ESPN `summary?event=` call per fixture returns actual FT/HT score + stats + team IDs, fetched directly by `fixture_id` (more precise than football-data.org's old fuzzy team-name matching ever was, too).
 
 Basketball: `nba_api` Python package — free, scrapes NBA.com, no key needed.
 
@@ -174,6 +174,8 @@ Tables:
 - `team_ratings` — Elo ratings (see below).
 
 `src/database.py` also computes **bias calibration** (`get_bias_factors`/`_bias_sync`): a learned home/away goal-bias multiplier and home-advantage/rho factors, computed per-league from resolved prediction errors, refreshed once per day. **Important gotcha**: calibration groups by whatever league name ESPN's scoreboard returns (`"English Premier League"`, `"Spanish LALIGA"`, etc.) which differs from this app's short config keys (`"Premier League"`, `"La Liga"`). `config.normalize_league_name()` / `ESPN_DISPLAY_TO_LEAGUE` bridges this — without it, per-league calibration silently falls back to the global cross-league average for every league. The bias clamp range is `0.60–1.75` (widened from an original `0.70–1.30` that was clamping the learned correction below what the data actually called for, in several leagues it's still pegged at the new ceiling — a sign the real fix is making `LEAGUE_AVG_GOALS` per-league instead of the single global `1.35` constant in `features/football.py`, not yet done).
+
+**Related, separate bug also found and fixed**: `_save_prediction_sync` hardcoded `"sport": "football"` for every saved prediction — including international ones, saved through the same function. Verified live: every stored international-fixture row had `sport="football"` despite `league="International Friendly"`. Two consequences: `get_bias_factors(sport="international")` could never find a matching row (silently useless), and football's own calibration pool was quietly contaminated with international-friendly error patterns mixed in. Now reads `pred.get("sport")`. Pre-existing mislabeled rows aren't retroactively fixable (locked at first save).
 
 ## Season-boundary / promotion handling (fetcher.py)
 
@@ -204,7 +206,7 @@ Updated after every match `resolve_predictions()` resolves, using goals **plus**
 
 Display: `predictor._team_ratings_display()` converts the raw Elo into `{attack, midfield, defence}` on a 0-100 scale (`elo_to_rating_100`, centered at 50) plus an overall 1-5 star rating (`team_star_rating`, 0.5 increments) — shown in `index.html`'s match modal under each team name (click-to-reveal), tagged "provisional" below `RAMP_GAMES` resolved matches. Basketball has no Elo tracking (football-only for now).
 
-**Migration note**: `team_ratings` and `predictions.home_team_id`/`away_team_id` must exist in Supabase (via `supabase_schema.sql`) for any of this to activate — until then `get_team_ratings()` gracefully degrades to neutral 1500/1500/1500 for every team (nothing breaks, Elo just stays inert).
+**Migration note**: `team_ratings` and `predictions.home_team_id`/`away_team_id` must exist in Supabase (via `supabase_schema.sql`) for any of this to activate — until then `get_team_ratings()` gracefully degrades to neutral 1500/1500/1500 for every team (nothing breaks, Elo just stays inert). As of 2026-08-21 this migration has been run and the resolve pipeline's football-data.org outage (see Data Sources) has been fixed — 692/788 previously-stuck predictions were backfilled in one pass, 125 teams already have real (non-baseline) ratings. `home_team_id`/`away_team_id` are `NULL` forever on any prediction row saved before that column existed (locked at first save, by design) — `resolve_predictions()` recovers the IDs from the same ESPN fetch as a fallback, so that backlog isn't permanently stranded even without a backfill migration.
 
 ## GitHub Actions
 

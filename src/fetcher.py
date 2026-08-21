@@ -847,15 +847,30 @@ async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
     """Fetch last N completed games for an NBA team from ESPN.
     Fetches regular season (seasontype=2) and playoffs (seasontype=3) in parallel
     so playoff form and H2H carry over into predictions.
+
+    Falls back to prior seasons if the current one doesn't have enough
+    completed games yet — e.g. off-season/before opening night, when ESPN's
+    "current season" default already points at the new (all-scheduled,
+    zero-completed) season. Verified live: with no season param, ESPN
+    returns the upcoming season's fixtures, all STATUS_SCHEDULED.
+
+    NB: ESPN's NBA `season` param is the year the season *ends*
+    (2025-26 season = season=2026) — the OPPOSITE convention from the
+    soccer endpoints (season=2025 there means the 2025-26 season, i.e. the
+    year it *starts*). Verified live for both.
     """
+    from datetime import date as _date
     tid = str(team_id)
 
-    async def _fetch(seasontype: int):
+    async def _fetch(seasontype: int, season: int = None):
+        params = {"seasontype": seasontype}
+        if season:
+            params["season"] = season
         try:
             async with httpx.AsyncClient() as client:
                 r = await client.get(
                     f"{ESPN_NBA_BASE}/teams/{tid}/schedule",
-                    params={"seasontype": seasontype},
+                    params=params,
                     timeout=15,
                 )
                 if r.status_code != 200:
@@ -864,20 +879,37 @@ async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
         except Exception:
             return []
 
-    reg_events, playoff_events = await asyncio.gather(_fetch(2), _fetch(3))
+    async def _fetch_both(season: int = None):
+        reg_events, playoff_events = await asyncio.gather(_fetch(2, season), _fetch(3, season))
+        return (
+            _parse_nba_schedule_events(reg_events, tid, playoff=False)
+            + _parse_nba_schedule_events(playoff_events, tid, playoff=True)
+        )
 
-    matches = (
-        _parse_nba_schedule_events(reg_events, tid, playoff=False)
-        + _parse_nba_schedule_events(playoff_events, tid, playoff=True)
-    )
+    matches = await _fetch_both()
+    seen_ids = {m["game_id"] for m in matches}
+
+    # date.today().year works directly as the "most recently completed
+    # season" candidate under ESPN's end-year convention, whether we're in
+    # the off-season (Jul-Sep) or early in a new season that hasn't
+    # accumulated games yet (Oct-Dec) — verified live for both.
+    year = _date.today().year
+    for offset in range(3):   # walk back up to 3 completed seasons
+        if len(matches) >= n:
+            break
+        more = await _fetch_both(season=year - offset)
+        for m in more:
+            if m["game_id"] not in seen_ids:
+                seen_ids.add(m["game_id"])
+                matches.append(m)
 
     # Deduplicate by game_id, keep playoff flag if present
-    seen: dict[str, dict] = {}
+    dedup: dict[str, dict] = {}
     for m in matches:
         gid = m["game_id"]
-        if gid not in seen or m["playoff"]:
-            seen[gid] = m
-    matches = list(seen.values())
+        if gid not in dedup or m["playoff"]:
+            dedup[gid] = m
+    matches = list(dedup.values())
 
     matches.sort(key=lambda x: x["date"], reverse=True)
     return matches[:n]

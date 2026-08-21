@@ -148,16 +148,27 @@ async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] 
     return fixtures
 
 
-async def get_espn_match_stats(event_id: str, league_slug: str) -> dict:
+async def get_espn_fixture_result(event_id: str, league_slug: str) -> dict:
     """
-    Fetch post-match team statistics (shots, shots on target, tackles,
-    interceptions, clearances, saves, etc.) for a completed fixture — used
-    as extra Elo-rating update input beyond just the scoreline (see
-    src/models/elo.py). Returns {} if unavailable (stats not published for
-    this match, or the match hasn't been played) — callers fall back to
-    goals-only in that case.
+    Fetch everything needed to resolve a prediction and update Elo, from a
+    single ESPN summary?event= call: actual score (FT + HT), completion
+    status, and per-side stats (shots, tackles, interceptions, etc. — falls
+    back gracefully when ESPN hasn't published detailed stats for this
+    match) plus each side's ESPN team_id.
 
-    Returns {"home": {stat_name: value, ...}, "away": {...}}.
+    This replaced football-data.org as the resolve-predictions data source
+    — verified live (2026-08-21) that account is disabled (403 "Your
+    account has been disabled" across every competition, not a rate limit).
+    ESPN already has everything needed and is the source used everywhere
+    else in this app, so there's no reason to depend on a second provider
+    here at all.
+
+    Returns {} if the match isn't finished yet or ESPN has no record.
+    Returns {
+      "completed": bool,
+      "home_ft": int, "away_ft": int, "home_ht": int|None, "away_ht": int|None,
+      "stats": {"home": {stat_name: value, ..., "team_id": "..."}, "away": {...}},
+    }
     """
     async with httpx.AsyncClient() as client:
         try:
@@ -171,12 +182,46 @@ async def get_espn_match_stats(event_id: str, league_slug: str) -> dict:
         except Exception:
             return {}
 
-    out = {}
+    comps = data.get("header", {}).get("competitions") or []
+    if not comps:
+        return {}
+    comp = comps[0]
+    if not comp.get("status", {}).get("type", {}).get("completed", False):
+        return {}
+
+    competitors = comp.get("competitors") or []
+    home = next((c for c in competitors if c.get("homeAway") == "home"), None)
+    away = next((c for c in competitors if c.get("homeAway") == "away"), None)
+    if not home or not away:
+        return {}
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _ht(c):
+        ls = c.get("linescores") or []
+        return _int(ls[0].get("displayValue")) if ls else None
+
+    stats = {}
     for t in data.get("boxscore", {}).get("teams", []):
-        stats = {s["name"]: s.get("value") for s in t.get("statistics", []) if s.get("name")}
-        if stats:
-            out[t.get("homeAway", "")] = stats
-    return out
+        home_away = t.get("homeAway", "")
+        if not home_away:
+            continue
+        s = {stat["name"]: stat.get("value") for stat in t.get("statistics", []) if stat.get("name")}
+        s["team_id"] = str(t.get("team", {}).get("id", "")) or None
+        stats[home_away] = s
+
+    return {
+        "completed": True,
+        "home_ft": _int(home.get("score")),
+        "away_ft": _int(away.get("score")),
+        "home_ht": _ht(home),
+        "away_ht": _ht(away),
+        "stats": stats,
+    }
 
 
 async def get_espn_team_schedule_raw(team_id: str, league_slug: str, season: int = None) -> list:

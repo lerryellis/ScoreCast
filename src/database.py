@@ -41,7 +41,13 @@ def _save_prediction_sync(pred: dict) -> None:
     ou  = p.get("over_under") or {}
 
     record = {
-        "sport":             "football",
+        # pred["sport"] is "football" or "international" (predict_football_fixture
+        # vs predict_international_fixture both save through this function) —
+        # previously hardcoded to "football", which silently broke international
+        # bias calibration (get_bias_factors(sport="international") could never
+        # find a matching row). Verified live: every stored international
+        # prediction had sport="football" despite league="International Friendly".
+        "sport":             pred.get("sport") or "football",
         "fixture_id":        str(pred.get("fixture_id", "")),
         "league":            pred.get("league", ""),
         "league_slug":       pred.get("league_slug", ""),
@@ -223,23 +229,21 @@ async def save_basketball_predictions(preds: list) -> None:
 
 # ── Resolve predictions ────────────────────────────────────────────────────────
 
-def _resolve_sync(unresolved: list, fd_by_date: dict) -> tuple:
-    """Match unresolved predictions to actual scores and write results.
+def _resolve_sync(unresolved: list, results_by_pred_id: dict) -> tuple:
+    """Match unresolved predictions to actual scores (from ESPN, keyed by
+    prediction id — see resolve_predictions) and write results.
 
     Returns (count, resolved_matches) — resolved_matches carries what's
     needed to update Elo ratings for each newly-resolved match (done
     separately, async, back in resolve_predictions — see there for why).
     """
-    from src.fetcher import match_ht_to_fixture
     client = _get_client()
     count  = 0
     resolved_matches = []
 
     for pred in unresolved:
-        match_date = pred["match_date"]
-        fd_matches = fd_by_date.get(match_date, [])
-        fd = match_ht_to_fixture(fd_matches, pred["home_team"], pred["away_team"])
-        if not fd or fd.get("home_ft") is None:
+        fd = results_by_pred_id.get(pred["id"])
+        if not fd or fd.get("home_ft") is None or fd.get("away_ft") is None:
             continue
 
         ah = fd["home_ft"]
@@ -286,16 +290,25 @@ def _resolve_sync(unresolved: list, fd_by_date: dict) -> tuple:
                 ignore_duplicates=True,
             ).execute()
             count += 1
-            if pred.get("home_team_id") and pred.get("away_team_id"):
+            # Elo only applies to club football right now (predict_international_fixture
+            # doesn't consume ratings). home_team_id/away_team_id may be None here — most
+            # predictions on file were saved before those columns existed, and the
+            # "locked at first save" design means they'll never get backfilled through
+            # the normal save path. resolve_predictions() below recovers them from the
+            # same ESPN fetch as a fallback so this backlog isn't permanently stranded
+            # (verified live: 788/788 currently-resolvable predictions had
+            # home_team_id=NULL before this fallback existed).
+            if (pred.get("sport") or "football") == "football":
                 resolved_matches.append({
                     "fixture_id":   pred["fixture_id"],
                     "league_slug":  pred.get("league_slug") or "",
-                    "home_team_id": pred["home_team_id"],
-                    "away_team_id": pred["away_team_id"],
+                    "home_team_id": pred.get("home_team_id"),
+                    "away_team_id": pred.get("away_team_id"),
                     "home_team":    pred["home_team"],
                     "away_team":    pred["away_team"],
                     "actual_home":  ah,
                     "actual_away":  aa,
+                    "stats":        fd.get("stats") or {},
                 })
         except Exception as e:
             print(f"[DB resolve error] {e}")
@@ -305,13 +318,25 @@ def _resolve_sync(unresolved: list, fd_by_date: dict) -> tuple:
 
 async def resolve_predictions() -> int:
     """
-    Fetch unresolved past predictions, look up actual scores from football-data.org,
-    and write results. Returns the number of predictions resolved.
+    Fetch unresolved past predictions, look up actual scores directly from
+    ESPN (keyed by each row's own fixture_id + league_slug), and write
+    results. Returns the number of predictions resolved.
+
+    Previously used football-data.org (fuzzy team-name matching per date/
+    competition). Switched to ESPN — verified live (2026-08-21) that the
+    football-data.org account is disabled ("Your account has been
+    disabled", 403, across every competition — not a rate limit, a dead
+    account) which meant resolve_predictions() had been resolving nothing
+    at all for some time. ESPN is already this app's primary data source
+    everywhere else and has full-time + half-time scores, so there's no
+    reason to depend on a second provider here. Fetching per-fixture-id is
+    also strictly more precise than football-data.org's fuzzy team-name
+    matching ever was.
     """
     if not SUPABASE_URL or not SUPABASE_KEY:
         return 0
 
-    from src.fetcher import get_football_data_ht_scores
+    from src.fetcher import get_espn_fixture_result
 
     client  = _get_client()
     today   = date.today().isoformat()
@@ -338,29 +363,33 @@ async def resolve_predictions() -> int:
     if not unresolved:
         return 0
 
-    # Group by date, fetch FD scores per date in parallel
-    by_date = defaultdict(list)
-    for p in unresolved:
-        by_date[p["match_date"]].append(p)
-
-    fd_results = await asyncio.gather(
-        *[get_football_data_ht_scores(d) for d in by_date]
+    # Fetch each fixture's actual result directly from ESPN by fixture_id.
+    fixture_results = await asyncio.gather(
+        *[get_espn_fixture_result(p["fixture_id"], p.get("league_slug") or "eng.1")
+          for p in unresolved]
     )
-    fd_by_date = {d: fd for d, fd in zip(by_date.keys(), fd_results)}
+    results_by_pred_id = {p["id"]: r for p, r in zip(unresolved, fixture_results) if r}
 
-    count, resolved_matches = await asyncio.to_thread(_resolve_sync, unresolved, fd_by_date)
+    count, resolved_matches = await asyncio.to_thread(_resolve_sync, unresolved, results_by_pred_id)
 
-    # Elo updates need async ESPN calls + async DB reads, so they run here
-    # rather than inside _resolve_sync (which is a plain thread-pool function).
-    # Best-effort: a failed rating update shouldn't block resolving predictions.
+    # Elo updates need async DB reads, so they run here rather than inside
+    # _resolve_sync (which is a plain thread-pool function). Best-effort: a
+    # failed rating update shouldn't block resolving predictions. Stats/team
+    # IDs come from the same ESPN fetch above (get_espn_fixture_result) — no
+    # second API call needed per match.
     if resolved_matches:
-        from src.fetcher import get_espn_match_stats
         for m in resolved_matches:
             try:
-                stats = await get_espn_match_stats(m["fixture_id"], m["league_slug"] or "eng.1")
+                stats = m.get("stats") or {}
+                # Recover team IDs from ESPN when the stored prediction row
+                # predates home_team_id/away_team_id (see _resolve_sync).
+                home_id = m["home_team_id"] or (stats.get("home") or {}).get("team_id")
+                away_id = m["away_team_id"] or (stats.get("away") or {}).get("team_id")
+                if not home_id or not away_id:
+                    continue   # genuinely unrecoverable (ESPN summary unavailable for this fixture)
                 await update_ratings_after_match(
-                    m["home_team_id"], m["home_team"],
-                    m["away_team_id"], m["away_team"],
+                    home_id, m["home_team"],
+                    away_id, m["away_team"],
                     m["league_slug"] or "eng.1",
                     m["actual_home"], m["actual_away"],
                     home_stats=stats.get("home"), away_stats=stats.get("away"),

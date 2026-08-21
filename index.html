@@ -1045,6 +1045,25 @@
   .modal-team img { width: 64px; height: 64px; object-fit: contain; }
   .modal-team-name { font-size: 18px; font-weight: 700; text-align: center; }
   .modal-team-badge { font-size: 10px; color: var(--subtext); font-weight: 600; letter-spacing: 0.5px; }
+
+  /* Team star rating (1-5, shown on card click in the modal) */
+  .team-star-rating { position: relative; display: inline-block; font-size: 15px; line-height: 1; letter-spacing: 2px; }
+  .team-star-rating .star-bg { color: var(--border); }
+  .team-star-rating .star-fg {
+    position: absolute; top: 0; left: 0; overflow: hidden; white-space: nowrap; color: var(--yellow);
+  }
+  .team-star-value { font-size: 10px; color: var(--subtext); margin-top: 2px; }
+
+  /* Attack/Midfield/Defence rating bars (0-100), shown under each team */
+  .team-ratings-bars { width: 100%; max-width: 160px; margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
+  .team-rating-row { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--subtext); }
+  .team-rating-label { width: 30px; flex-shrink: 0; font-weight: 700; letter-spacing: 0.3px; }
+  .team-rating-track { flex: 1; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .team-rating-fill { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
+  .team-rating-fill.atk { background: var(--football); }
+  .team-rating-fill.mid { background: var(--accent); }
+  .team-rating-fill.def { background: var(--basketball); }
+  .team-rating-num { width: 22px; flex-shrink: 0; text-align: right; font-weight: 700; color: var(--text); }
   .modal-score-center {
     display: flex;
     flex-direction: column;
@@ -1856,6 +1875,33 @@
     } catch { return '—'; }
   }
 
+  // Attack/midfield/defence bars + overall star rating, shown under each
+  // team on the match modal (click-to-reveal — see teamsRow above).
+  function buildTeamRatings(r) {
+    if (!r) return '';
+    const pct = r.stars / 5 * 100;
+    return `
+      <div class="team-star-rating" title="${r.stars}/5 stars">
+        <span class="star-bg">★★★★★</span>
+        <span class="star-fg" style="width:${pct}%">★★★★★</span>
+      </div>
+      <div class="team-star-value">${r.stars}/5${r.games_played < 10 ? ' · provisional' : ''}</div>
+      <div class="team-ratings-bars">
+        ${teamRatingRow('ATK', r.attack, 'atk')}
+        ${teamRatingRow('MID', r.midfield, 'mid')}
+        ${teamRatingRow('DEF', r.defence, 'def')}
+      </div>`;
+  }
+
+  function teamRatingRow(label, value, cls) {
+    return `
+      <div class="team-rating-row">
+        <span class="team-rating-label">${label}</span>
+        <div class="team-rating-track"><div class="team-rating-fill ${cls}" style="width:${value}%"></div></div>
+        <span class="team-rating-num">${value}</span>
+      </div>`;
+  }
+
   function probBar(winP, drawP, lossP) {
     return `
       <div class="prob-bar-wrap">
@@ -2370,6 +2416,7 @@
           ${homeLogo}
           <div class="modal-team-name">${m.home_team}</div>
           <div class="modal-team-badge">${isBball ? (m.home_abbr || 'HOME') : 'HOME'}</div>
+          ${!isBball ? buildTeamRatings(m.home_ratings) : ''}
         </div>
         <div class="modal-score-center">
           <div class="modal-score-boxes">
@@ -2388,6 +2435,7 @@
           ${awayLogo}
           <div class="modal-team-name">${m.away_team}</div>
           <div class="modal-team-badge">${isBball ? (m.away_abbr || 'AWAY') : 'AWAY'}</div>
+          ${!isBball ? buildTeamRatings(m.away_ratings) : ''}
         </div>
       </div>`;
 

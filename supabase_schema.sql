@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS team_ratings (
   sport         TEXT NOT NULL DEFAULT 'football',
   attack_elo    FLOAT NOT NULL DEFAULT 1500,
   defence_elo   FLOAT NOT NULL DEFAULT 1500,
+  midfield_elo  FLOAT NOT NULL DEFAULT 1500,
   games_played  INTEGER NOT NULL DEFAULT 0,
   updated_at    TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Existing deployments (table already created without this column):
+ALTER TABLE team_ratings ADD COLUMN IF NOT EXISTS midfield_elo FLOAT NOT NULL DEFAULT 1500;

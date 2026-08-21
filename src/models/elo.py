@@ -10,9 +10,13 @@ That's what lets the model recognise "this team is fundamentally weaker" for
 a side like a newly-promoted club, instead of only seeing 5 good games
 against weaker opposition (see the SV Elversberg case that motivated this).
 
-Two ratings per team, not one:
-  - attack_elo:  how good this team is at scoring
-  - defence_elo: how good this team is at preventing goals
+Three ratings per team:
+  - attack_elo:   how good this team is at scoring
+  - defence_elo:  how good this team is at preventing goals
+  - midfield_elo: how good this team is at controlling the game (possession,
+                   passing) — doesn't feed the Poisson lambda (there's no
+                   "goals from possession" formula), but is tracked for the
+                   attack/midfield/defence rating display on team cards.
 A team's expected goals in a match come from attack_elo (theirs) vs
 defence_elo (opponent's) — mirroring how home_attack/away_defence already
 combine in the Poisson lambda formula.
@@ -51,6 +55,13 @@ SHOT_ON_TARGET_WEIGHT = 0.10
 TOTAL_SHOT_WEIGHT     = 0.03
 DEFENSIVE_ACTION_WEIGHT = 0.02   # tackles won + interceptions + clearances + blocked shots + saves
 
+# Midfield rating update — slower-moving than attack/defence (K is lower)
+# since possession/passing is noisier match-to-match than goals, and it has
+# no direct bearing on the scoreline model, only the display rating.
+K_FACTOR_MIDFIELD = 12.0
+POSSESSION_WEIGHT  = 0.7
+PASS_ACCURACY_WEIGHT = 0.3
+
 
 # How many resolved matches (with this app's Elo tracking) a team needs
 # before Elo carries its full weight in the blend. Below this, Elo's
@@ -84,7 +95,8 @@ def elo_to_defence_ratio(defence_elo: float) -> float:
 
 
 def seed_rating_for_promotion(attack_elo: float, defence_elo: float,
-                               old_league_slug: str, new_league_slug: str) -> tuple:
+                               old_league_slug: str, new_league_slug: str,
+                               midfield_elo: float = None) -> tuple:
     """
     A team's rating is on file under old_league_slug, but they're now playing
     in new_league_slug. If that's a genuine division change (not just a
@@ -95,25 +107,30 @@ def seed_rating_for_promotion(attack_elo: float, defence_elo: float,
     Division "depth" is inferred from PROMOTION_FEEDER_LEAGUE's chain
     position — e.g. eng.1 is tier 0, eng.2 is tier 1, eng.3 is tier 2.
     Unknown slugs (cups, international) are treated as no-ops.
+
+    Returns (attack_elo, defence_elo, midfield_elo) — midfield_elo is passed
+    through unchanged if not given (callers that don't track it yet can omit it).
     """
     if old_league_slug == new_league_slug:
-        return attack_elo, defence_elo
+        return attack_elo, defence_elo, midfield_elo
 
     old_depth = _tier_depth(old_league_slug)
     new_depth = _tier_depth(new_league_slug)
     if old_depth is None or new_depth is None:
-        return attack_elo, defence_elo
+        return attack_elo, defence_elo, midfield_elo
 
     tiers_moved = old_depth - new_depth   # positive = promoted (moved to a lower depth number)
     if tiers_moved > 0:
-        # Promoted: attack down, defence gets worse (defence_elo down) per tier
+        # Promoted: attack/midfield down, defence gets worse (defence_elo down) per tier
         delta = PROMOTION_MARKDOWN_PER_TIER * tiers_moved
-        return attack_elo - delta, defence_elo - delta
+        new_mid = midfield_elo - delta if midfield_elo is not None else None
+        return attack_elo - delta, defence_elo - delta, new_mid
     elif tiers_moved < 0:
-        # Relegated: attack up, defence improves (defence_elo up) per tier
+        # Relegated: attack/midfield up, defence improves (defence_elo up) per tier
         delta = RELEGATION_MARKUP_PER_TIER * (-tiers_moved)
-        return attack_elo + delta, defence_elo + delta
-    return attack_elo, defence_elo
+        new_mid = midfield_elo + delta if midfield_elo is not None else None
+        return attack_elo + delta, defence_elo + delta, new_mid
+    return attack_elo, defence_elo, midfield_elo
 
 
 def _tier_depth(league_slug: str) -> int:
@@ -196,3 +213,51 @@ def update_ratings(home_attack: float, home_defence: float,
     new_home_defence = home_defence - away_delta
 
     return new_home_attack, new_home_defence, new_away_attack, new_away_defence
+
+
+def update_midfield_ratings(home_midfield: float, away_midfield: float,
+                             home_stats: dict = None, away_stats: dict = None) -> tuple:
+    """
+    Update both teams' midfield Elo after a resolved match, from possession
+    share and pass completion — a zero-sum "who controlled the game" signal,
+    updated the same way chess Elo compares actual vs expected score.
+    No-ops (returns ratings unchanged) when stats aren't available.
+    """
+    if not home_stats or not away_stats:
+        return home_midfield, away_midfield
+
+    home_possession = float(home_stats.get("possessionPct", 50) or 50) / 100
+    home_pass_pct   = float(home_stats.get("passPct", 0.75) or 0.75)
+    away_pass_pct   = float(away_stats.get("passPct", 0.75) or 0.75)
+
+    home_performance = POSSESSION_WEIGHT * home_possession + PASS_ACCURACY_WEIGHT * home_pass_pct
+    expected_home = 1 / (1 + 10 ** (-(home_midfield - away_midfield) / ELO_SCALE))
+
+    delta = K_FACTOR_MIDFIELD * (home_performance - expected_home)
+    return home_midfield + delta, away_midfield - delta
+
+
+def elo_to_rating_100(elo: float, higher_is_better: bool = True) -> float:
+    """
+    Convert an Elo rating to a 0-100 display scale, centered at 50 for the
+    neutral baseline (1500). Used for the attack/midfield/defence numbers
+    shown on team cards — NOT used anywhere in the prediction math (that
+    stays in Elo-space / ratio-space, see elo_to_attack_ratio etc).
+    """
+    direction = 1 if higher_is_better else -1
+    return max(0.0, min(100.0, 50.0 + direction * (elo - BASELINE_ELO) / ELO_SCALE * 50.0))
+
+
+def team_star_rating(attack_elo: float, midfield_elo: float, defence_elo: float) -> float:
+    """
+    Overall 1-5 star rating (0.5 increments) from the three component
+    ratings, for the team-card display. defence_elo is already "higher =
+    better" in this system's convention, same as attack/midfield.
+    """
+    avg_100 = (
+        elo_to_rating_100(attack_elo) +
+        elo_to_rating_100(midfield_elo) +
+        elo_to_rating_100(defence_elo)
+    ) / 3.0
+    stars = avg_100 / 100.0 * 5.0
+    return max(0.5, min(5.0, round(stars * 2) / 2))

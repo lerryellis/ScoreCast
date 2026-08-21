@@ -27,6 +27,30 @@ MIN_GAMES_FOR_RANK = 3
 
 # ─── Football ─────────────────────────────────────────────────────────────────
 
+def _team_ratings_display(elo: dict) -> dict:
+    """
+    Attack/midfield/defence on a 0-100 scale + an overall 1-5 star rating,
+    for the team-card UI (shown on click — see index.html match modal).
+    Purely a display transform of the Elo ratings already used in the
+    prediction math; doesn't feed back into it.
+    """
+    from src.models.elo import elo_to_rating_100, team_star_rating
+    if not elo:
+        return None
+    attack_elo   = elo.get("attack_elo")
+    defence_elo  = elo.get("defence_elo")
+    midfield_elo = elo.get("midfield_elo")
+    if attack_elo is None or defence_elo is None or midfield_elo is None:
+        return None
+    return {
+        "attack":   round(elo_to_rating_100(attack_elo)),
+        "midfield": round(elo_to_rating_100(midfield_elo)),
+        "defence":  round(elo_to_rating_100(defence_elo)),
+        "stars":    team_star_rating(attack_elo, midfield_elo, defence_elo),
+        "games_played": elo.get("games_played", 0),
+    }
+
+
 async def predict_football_fixture(fixture: dict, standings: dict = None,
                                     home_bias: float = 1.0, away_bias: float = 1.0,
                                     rho_factor: float = 1.0, **_) -> dict:
@@ -114,6 +138,8 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
 
     return {
         "sport":         "football",
+        "home_ratings":  _team_ratings_display(home_elo),
+        "away_ratings":  _team_ratings_display(away_elo),
         "fixture_id":    fixture["fixture_id"],
         "home_team":     fixture["home_team"],
         "home_team_id":  fixture["home_team_id"],

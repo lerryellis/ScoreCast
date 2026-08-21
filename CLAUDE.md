@@ -37,6 +37,124 @@ ScoreCast is a sports score prediction app covering football/soccer and NBA bask
 - Dark/light sports-themed UI, tabs for Football / International / Basketball / Accuracy / Performance
 - Calls `/api/predictions/*` endpoints, renders match cards; clicking a card opens a modal (`openMatchModal` → `renderModalContent`) with scores, probability bars, scorelines, form/H2H, and team star ratings
 
+## Model Internals — algorithms, formulas, considerations
+
+Three layers run in sequence for every football prediction: **feature pipeline → Dixon-Coles Poisson → XGBoost correction**, then Elo blends into the feature pipeline as a fourth input. This section documents the actual math, not just the names.
+
+### 1. Feature pipeline → λ (expected goals) — `features/football.py`
+
+Everything reduces to two numbers, `lambda_home` and `lambda_away` (expected goals for each side), built as a chain of multiplicative factors around a league-average baseline:
+
+```python
+lambda_home = (
+    home_attack * away_defence * LEAGUE_AVG_GOALS   # LEAGUE_AVG_GOALS = 1.35
+    * HOME_ADVANTAGE_FACTOR
+    * home_rest * home_inj * home_momentum
+    * home_congestion * home_motivation
+    * home_rank_quality
+    * away_cs_factor
+)
+# lambda_away mirrors this with attack/defence and home/away swapped
+```
+
+Each factor is a ratio centered at **1.0 = league average**, so the whole expression reads as "how many goals above/below league-average, adjusted by every consideration." Where each factor comes from:
+
+- **`home_attack` / `home_defence`** — `avg_goals_scored / LEAGUE_AVG_GOALS` and `avg_goals_conceded / LEAGUE_AVG_GOALS`, blended 50/50 from last-5 and last-10 games (`_weighted_avg`), venue-split (home games only for the home team, if ≥3 available). This is the "raw form" signal.
+- **Cross-tier discount** — if that form data was pulled from a feeder league (`tier_offset > 0`, see Season-boundary handling below), `home_attack *= 0.85**tier_offset` and `home_defence *= 1.15**tier_offset` (`CROSS_TIER_ATTACK_DISCOUNT`/`CROSS_TIER_DEFENCE_INFLATION`) — a promoted team's dominant lower-division numbers get discounted before they reach λ.
+- **Elo blend** — `home_attack = (1-w)*home_attack + w*elo_to_attack_ratio(attack_elo)` where `w` ramps 0→0.5 with games played (see Elo section). Applied *after* the cross-tier discount, on the same 1.0-centered scale.
+- **`home_momentum`** — points-per-game over last 5 (`_ppg`) mapped through a step function: PPG≥2.4 → 1.08, ≥1.5 → 1.03, ≥0.8 → 1.00, else 0.93.
+- **`home_cs_factor`** (applied to the *opponent's* λ) — clean-sheet rate over last 10 reduces the opponent's expected goals: `1.0 - max(0, cs_rate - 0.3) * 0.15`.
+- **`home_congestion`** — games in the last 14 days across *all* competitions (cups count): ≥4 → 0.94, 3 → 0.97, ≤2 → 1.0.
+- **`home_rest`** — from `days_since_last_match`, via `features/base.py::rest_factor`.
+- **`home_motivation`** — table position: bottom-3 (relegation fight) → 1.06, top-4 (title/CL chase) → 1.03, else 1.0. Zeroed out (rank treated as unknown) below `MIN_GAMES_FOR_RANK` (3) games played, since ESPN's standings list every team 1..N before kickoff with `games_played=0` — not a real position.
+- **`home_rank_quality`** — the *relative* gap between the two teams' table positions: `1.0 + (away_rank - home_rank)/total_teams * 0.10`, clamped to `[0.90, 1.10]`.
+- **H2H blend** (applied after λ is otherwise complete) — if ≥3 head-to-head meetings exist, blend 20% weight toward the average goals in those meetings (`h2h_weight = 0.20`); if ≥2 of those were at this specific venue, that venue-specific average gets 40% of the H2H portion (`0.6*overall + 0.4*venue`).
+
+**Considerations / known limitations:**
+- `LEAGUE_AVG_GOALS = 1.35` is a *single global constant* used for every league and country. This is the still-open root cause behind Serie A/Ligue 1/EPL bias hitting the calibration clamp ceiling (see Bias calibration above) — the fix is making it per-league, not done yet.
+- All the "1.0 = average" factors are multiplied together, so their effects compound — a team that's simultaneously in great form, well-rested, and motivated can stack multiple >1.0 factors into a large swing. No factor is normalized against the others.
+- Rank/motivation/momentum constants (0.93–1.10 range) are hand-picked, not fit from data.
+
+### 2. Dixon-Coles Poisson scoreline model — `models/football_model.py`
+
+Takes `(lambda_home, lambda_away)` and returns a full scoreline probability distribution. **This is an exact analytical calculation, not a Monte Carlo simulation** — despite the module docstring/`N_SIMULATIONS = 100_000` constant claiming otherwise (dead/stale comment from an earlier implementation; worth cleaning up if touching this file).
+
+```python
+for h in 0..8:            # MAX_GOALS = 8, i.e. a 9×9 matrix
+  for a in 0..8:
+    p = poisson.pmf(h, lambda_home) * poisson.pmf(a, lambda_away)   # independent Poisson
+    p *= dixon_coles_correction(h, a, rho)                          # low-score adjustment
+    prob_matrix[h][a] = p
+prob_matrix /= prob_matrix.sum()   # renormalize (truncating at 8 loses a little mass)
+```
+
+- **Independent Poisson base**: standard assumption that home and away goals are independent Poisson processes with rates λ_home/λ_away. This is the well-known weakness Dixon-Coles (1997) addresses — real football has a slight negative correlation (very low-scoring games, especially 0-0/1-0/0-1/1-1, are *more* common than independence predicts, because a team already leading tends to sit back).
+- **`_dixon_coles_correction(h, a, rho)`**: multiplies those four low-score cells by `1 - λ_h·λ_a·ρ` (0-0), `1 + λ_a·ρ` (1-0), `1 + λ_h·ρ` (0-1), `1 - ρ` (1-1); every other cell is unadjusted (`1.0`). `rho` is small and negative (`effective_rho = max(-0.15, min(0, -0.04 * rho_factor))`, where `rho_factor` comes from bias calibration) — deliberately kept small so the natural Poisson shape drives the result and this only nudges the low-score cells.
+- **Most likely scoreline**: `argmax` over the full matrix.
+- **Win/draw/loss**: the matrix is literally triangular-split — `np.tril(matrix, -1).sum()` = home-win probability (all cells where home goals > away goals), `np.trace(matrix)` = draw probability (the diagonal, h==a), `np.triu(matrix, 1).sum()` = away-win. Clean because the matrix rows/columns are goals-scored, so "home wins" is exactly "below the diagonal."
+- **Top-5 scorelines**: flatten and sort by probability, no surprises.
+- **Over/Under lines**: group matrix cells by `h+a` into a total-goals distribution, then sum tail probability past each line (0.5/1.5/2.5/3.5).
+- **"Safe bet"**: highest over-line where P(over) ≥ 65%, checked from 3.5 down to 0.5; falls back to "under 0.5" if nothing clears that bar.
+- **Half-time scores**: exploits the Poisson memoryless property — `ht_lambda = full_lambda / 2`, floored. This assumes goals are scored at a uniform rate through the match, which is a simplification (real football is scored more heavily in the second half on average), but is a reasonable default absent half-specific data.
+
+### 3. XGBoost ML correction layer — `models/ml_model.py`
+
+Runs *after* the Poisson model, as a learned correction on top of it — not a replacement:
+
+```
+fixture → features → Poisson(λ) → base_pred  →  XGBoost(base_pred's own outputs as features)  →  corrected (λ_home, λ_away)  →  Poisson re-run with corrected λ  →  final prediction
+```
+
+- **Football features fed to XGBoost**: `lambda_home, lambda_away, win_prob, draw_prob, loss_prob, confidence, predicted_home, predicted_away, over_0_5..over_3_5, league_enc` — i.e. it's learning a correction *from the Poisson model's own output*, treating the Poisson model as a feature generator rather than re-deriving from raw match data. `league_enc` is an integer league ID assigned in training-order (`{league: index}`, 0 = unknown/unseen league).
+- **Objective differs by sport, and this matters**: football uses `objective="count:poisson"` (correct for small counts, 0-5ish goals). Basketball uses `objective="reg:squarederror"` — using Poisson's log-link at basketball's 70-160 point scale overflowed and produced a cross-validated MAE of ~1e21 before this was split out; squared-error is the right objective for that continuous scale.
+- **Training**: `XGBRegressor(n_estimators=300, learning_rate=0.05, max_depth=4, subsample=0.8, colsample_bytree=0.8)`, one regressor for home goals and one for away, trained on resolved `prediction_results` joined with their original `predictions` row. Needs ≥15 samples or training refuses (`{"error": "Insufficient data"}`).
+- **Inference sanity clamps**: football output outside `[0.05, 8.0]` λ, or basketball outside `[70, 160]` points, is **rejected outright** (`predict()` returns `None`, caller falls back to the un-corrected Poisson/base prediction) — guards against the log-link extrapolating wildly on inputs outside the training distribution.
+- **Model persistence**: pickled `SportsMLModel` instances at `models/football_ml_latest.pkl`/`models/basketball_ml_latest.pkl`, loaded once as a module-level singleton (`get_football_ml()`/`get_basketball_ml()`).
+
+**Considerations:** the feature set is *entirely derived from the Poisson model's own output* plus a league ID — there's no raw match-context feature (no form/rest/injury signal directly), so this layer can only learn "the Poisson model tends to be off in this direction when its own outputs look like X," not anything about the match itself independently. A league added after the last training run always encodes to 0 (unknown) until retrained.
+
+### 4. Elo ratings — `models/elo.py`
+
+See the "Team Elo Ratings" section below for the product-level why. This is the formula-level how. Three independent ratings per team — `attack_elo`, `defence_elo`, `midfield_elo` — each baseline `1500.0`, logistic scale `400.0` (same convention as chess/FIDE Elo, i.e. a 400-point gap = the stronger side is a 10:1 favorite on that dimension).
+
+**Converting Elo to the model's ratio scale** (used to blend into `home_attack`/`home_defence`):
+```python
+elo_to_attack_ratio(elo)  = 10 ** ((elo - 1500) / 400)     # >1500 → ratio > 1.0
+elo_to_defence_ratio(elo) = 10 ** (-(elo - 1500) / 400)    # >1500 → ratio < 1.0 (better defence = fewer relative goals conceded)
+```
+
+**Post-match update** (`update_ratings`) — standard Elo actual-vs-expected, but the "actual" side is a *composite performance* number, not just the raw goal count:
+```python
+expected_home_goals = LEAGUE_AVG_GOALS * 10 ** ((home_attack_elo - away_defence_elo) / 400)
+home_performance    = goals_home + 0.10*shots_on_target_home + 0.03*total_shots_home
+                       - 0.02*(away's tackles+interceptions+clearances+blocked_shots+saves)
+delta                = K_FACTOR * (home_performance - expected_home_goals) / LEAGUE_AVG_GOALS   # K_FACTOR = 24.0
+new_home_attack_elo  = home_attack_elo + delta
+new_away_defence_elo = away_defence_elo - delta   # symmetric: the away side's defence rating absorbs the same swing
+```
+Mirrored for away-attack vs home-defence. The shot/defensive-action weights are a "goals, adjusted for chances" signal — a team that dominated shots but got unlucky isn't marked down as hard as the scoreline alone would suggest, and a defence that made a lot of last-ditch tackles/interceptions/clearances even in a loss gets partial credit. Falls back to goals-only (`_composite_performance` returns `goals` unchanged) when ESPN doesn't have shot stats for that match.
+
+**Midfield update** (`update_midfield_ratings`) — separate, lower `K_FACTOR_MIDFIELD = 12.0` (possession is noisier match-to-match than goals), uses the standard chess-Elo expected-score formula since possession is naturally zero-sum:
+```python
+home_performance = 0.7*possession_share_home + 0.3*pass_completion_home
+expected_home     = 1 / (1 + 10 ** (-(home_mid - away_mid) / 400))
+delta             = K_FACTOR_MIDFIELD * (home_performance - expected_home)
+```
+
+**Promotion/relegation seeding** (`seed_rating_for_promotion`) — a one-time markdown/markup applied when a team's rating (on file under one `league_slug`) is looked up under a different one. Tier depth comes from walking `PROMOTION_FEEDER_LEAGUE`'s chain (`eng.1`=0, `eng.2`=1, `eng.3`=2, `eng.4`=3, similarly for esp/ita/ger/fra):
+```python
+tiers_moved = old_depth - new_depth
+if promoted (tiers_moved > 0): attack -= 40*tiers_moved; defence -= 40*tiers_moved   # PROMOTION_MARKDOWN_PER_TIER
+if relegated (tiers_moved < 0): attack += 25*|tiers_moved|; defence += 25*|tiers_moved|   # RELEGATION_MARKUP_PER_TIER
+```
+Asymmetric by design — promoted teams historically regress harder than relegated teams overperform.
+
+**Blend weight ramp** (`elo_blend_weight`) — `0.5 * min(1.0, games_played / 10)`. Documented at length in the Team Elo Ratings section below; the short version is a flat 50/50 blend against a team's still-neutral 1500 rating actively hurts predictions until real match history accumulates, so the weight ramps in instead of being constant.
+
+**0-100 display scale + stars** (`elo_to_rating_100`, `team_star_rating`) — pure display transform, doesn't feed back into any prediction math: `50 + (elo-1500)/400 * 50`, clamped `[0,100]`; stars = average of the three 0-100 numbers, scaled to `/5` and rounded to the nearest 0.5.
+
+**Considerations:** `K_FACTOR` (24), `K_FACTOR_MIDFIELD` (12), the shot/defensive-action weights (0.10/0.03/0.02), and the promotion/relegation markdown/markup (40/25) are all **hand-picked starting points, not fit from data** — there isn't yet enough resolved-match volume through this system to calibrate them properly. Revisit once a season's worth of resolved matches has accumulated.
+
 ## Data Sources — important, has changed from initial build
 
 **Football's primary source is ESPN's free public API** (`site.api.espn.com/apis/site/v2/sports/soccer/...`), not api-football.com. This matters because:

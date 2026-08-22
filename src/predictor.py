@@ -200,8 +200,21 @@ async def get_all_football_predictions(league_name: str = "Premier League",
     for fixture in fixtures:
         try:
             if (fixture.get("is_live") or fixture.get("is_final")) and str(fixture["fixture_id"]) in saved_preds:
-                # Game has started or finished — show the locked pre-kickoff prediction
+                # Game has started or finished — show the locked pre-kickoff prediction.
+                # Team ratings/form/H2H aren't part of "the prediction" being locked
+                # (that's just the scoreline/probabilities, to preserve prediction
+                # integrity) — they're live team info, so still fetch them fresh here.
+                # Previously omitted entirely from this branch, so ratings/form/H2H
+                # went blank on any live-or-finished match card.
                 saved = saved_preds[str(fixture["fixture_id"])]
+                from src.database import get_team_ratings
+                form_slug = CUP_TO_LEAGUE.get(fixture.get("league_slug", ""), fixture.get("league_slug", ""))
+                home_matches, away_matches, h2h, elo_ratings = await asyncio.gather(
+                    get_espn_team_match_history(fixture["home_team_id"], form_slug, n=5),
+                    get_espn_team_match_history(fixture["away_team_id"], form_slug, n=5),
+                    get_espn_head_to_head(fixture["home_team_id"], fixture["away_team_id"], fixture.get("league_slug", "")),
+                    get_team_ratings([fixture["home_team_id"], fixture["away_team_id"]], form_slug),
+                )
                 pred = {
                     "sport":         "football",
                     "fixture_id":    fixture["fixture_id"],
@@ -234,6 +247,11 @@ async def get_all_football_predictions(league_name: str = "Premier League",
                         "safe_bet":          {"line": saved.get("safe_bet_line"), "probability": saved.get("safe_bet_prob")},
                         "over_under":        {k: saved.get(k) for k in ("over_0_5","over_1_5","over_2_5","over_3_5")},
                     },
+                    "home_ratings":  _team_ratings_display(elo_ratings.get(str(fixture["home_team_id"]))),
+                    "away_ratings":  _team_ratings_display(elo_ratings.get(str(fixture["away_team_id"]))),
+                    "home_form":     home_matches[:5],
+                    "away_form":     away_matches[:5],
+                    "h2h":           h2h[:5],
                     "prediction_locked": True,
                 }
                 results.append(pred)

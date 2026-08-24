@@ -101,6 +101,7 @@
   .nav-tab.football.active   { color: var(--football); }
   .nav-tab.basketball.active { color: var(--basketball); }
   .nav-tab.accuracy.active   { color: var(--yellow); }
+  .nav-tab.safebets.active   { color: var(--green); }
 
   /* ── Accuracy View ── */
   #accuracyView { padding: 0 0 40px; }
@@ -602,6 +603,45 @@
     grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
     gap: 20px;
   }
+
+  /* ── Safe Bets list ── */
+  .safebets-list { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+  .safebet-row {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    animation: fadeUp 0.35s ease both;
+  }
+  .safebet-rank {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--border); color: var(--subtext);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; flex-shrink: 0;
+  }
+  .safebet-main { flex: 1; min-width: 0; }
+  .safebet-league { font-size: 11px; color: var(--subtext); font-weight: 600; letter-spacing: 0.3px; }
+  .safebet-teams { font-size: 15px; font-weight: 700; margin-top: 2px; }
+  .safebet-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .safebet-pick {
+    text-align: right; flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    padding-left: 16px;
+  }
+  .safebet-pick-line { font-size: 16px; font-weight: 800; color: var(--green); }
+  .safebet-pick-prob { font-size: 11px; color: var(--subtext); margin-top: 2px; }
+  .safebet-copy-btn {
+    background: var(--border); border: none; color: var(--text);
+    border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600;
+    cursor: pointer; flex-shrink: 0; transition: background 0.15s;
+  }
+  .safebet-copy-btn:hover { background: var(--accent); color: #000; }
+  .safebet-copy-btn.copied { background: var(--green); color: #000; }
+  .safebets-empty { text-align: center; padding: 60px 20px; color: var(--subtext); }
+  .safebets-copyall-row { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 
   /* ── Match Card ── */
   .match-card {
@@ -1174,6 +1214,9 @@
     <button type="button" class="nav-tab basketball" onclick="switchSport('basketball')">
       🏀 <span class="label">Basketball</span>
     </button>
+    <button type="button" class="nav-tab safebets" onclick="switchSport('safebets')">
+      🎯 <span class="label">Safe Bets</span>
+    </button>
     <button type="button" class="nav-tab accuracy" onclick="switchSport('accuracy')">
       📊 <span class="label">Accuracy</span>
     </button>
@@ -1286,6 +1329,22 @@
 
     <!-- Match grid -->
     <div id="internationalGrid" class="matches-grid"></div>
+  </div>
+
+  <!-- ── Safe Bets View ── -->
+  <div id="safebetsView" class="hidden">
+    <div class="accuracy-title-row">
+      <span class="sport-icon">🎯</span>
+      <div>
+        <h1>Safe Bets</h1>
+        <p>Every league's highest-confidence over-line pick · Manual entry only — no auto-booking</p>
+      </div>
+      <div class="sport-toggle-group">
+        <button type="button" class="sport-toggle-btn active" id="sbSportFootball" onclick="setSafeBetSport('football')">⚽ Football</button>
+        <button type="button" class="sport-toggle-btn" id="sbSportBasketball" onclick="setSafeBetSport('basketball')">🏀 Basketball</button>
+      </div>
+    </div>
+    <div id="safeBetsList" class="safebets-list"></div>
   </div>
 
   <!-- ── Accuracy View ── -->
@@ -1580,8 +1639,14 @@
     document.getElementById('footballView').classList.toggle('hidden', sport !== 'football');
     document.getElementById('internationalView').classList.toggle('hidden', sport !== 'international');
     document.getElementById('basketballView').classList.toggle('hidden', sport !== 'basketball');
+    document.getElementById('safebetsView').classList.toggle('hidden', sport !== 'safebets');
     document.getElementById('accuracyView').classList.toggle('hidden', sport !== 'accuracy');
     document.getElementById('performanceView').classList.toggle('hidden', sport !== 'performance');
+    if (sport === 'safebets') {
+      refreshTickerDisplay();
+      loadSafeBets();
+      return;
+    }
     if (sport === 'accuracy') {
       refreshTickerDisplay();
       loadScorecard();
@@ -2963,6 +3028,91 @@
   let _perfChart = null;
   let _accuracySport = 'football';
   let _perfSport     = 'football';
+
+  // ── Safe Bets page ────────────────────────────────────────────────────────
+  let _safeBetSport = 'football';
+
+  function setSafeBetSport(sport) {
+    _safeBetSport = sport;
+    document.getElementById('sbSportFootball').classList.toggle('active', sport === 'football');
+    document.getElementById('sbSportBasketball').classList.toggle('active', sport === 'basketball');
+    loadSafeBets();
+  }
+
+  async function loadSafeBets() {
+    const el = document.getElementById('safeBetsList');
+    el.innerHTML = '<div class="safebets-empty">Sweeping every league for safe bets…</div>';
+    try {
+      const res  = await fetch(`/api/safe-bets?sport=${_safeBetSport}`);
+      const data = await res.json();
+      renderSafeBets(data.picks || []);
+    } catch (e) {
+      el.innerHTML = '<div class="safebets-empty" style="color:var(--red)">Could not load safe bets.</div>';
+    }
+  }
+
+  function formatSafeBetLine(sb) {
+    // "under_0.5" fallback (no over-line cleared 65%) vs a normal over-line pick
+    if (typeof sb.line === 'string' && sb.line.startsWith('under')) {
+      return `Under ${sb.line.split('_')[1]}`;
+    }
+    return `Over ${sb.line}`;
+  }
+
+  function safeBetSlipText(p) {
+    return `${p.home_team} vs ${p.away_team} — ${formatSafeBetLine(p.safe_bet)} (${p.safe_bet.probability}%)`;
+  }
+
+  function copySafeBet(idx, btn) {
+    const p = _loadedSafeBets[idx];
+    navigator.clipboard.writeText(safeBetSlipText(p)).then(() => {
+      btn.textContent = 'Copied ✓';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+    });
+  }
+
+  function copyAllSafeBets() {
+    const text = _loadedSafeBets.map(safeBetSlipText).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById('copyAllSafeBetsBtn');
+      if (btn) {
+        const orig = btn.textContent;
+        btn.textContent = 'Copied all ✓';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      }
+    });
+  }
+
+  let _loadedSafeBets = [];
+
+  function renderSafeBets(picks) {
+    _loadedSafeBets = picks;
+    const el = document.getElementById('safeBetsList');
+    if (!picks.length) {
+      el.innerHTML = '<div class="safebets-empty">No safe bets clear the confidence bar today — check back later.</div>';
+      return;
+    }
+    const rows = picks.map((p, i) => `
+      <div class="safebet-row" style="animation-delay:${i * 0.03}s">
+        <div class="safebet-rank">${i + 1}</div>
+        <div class="safebet-main">
+          <div class="safebet-league">${p.league}${p.match_time ? ' · ' + formatTime(p.match_time) : ''}</div>
+          <div class="safebet-teams">${p.home_team} vs ${p.away_team}</div>
+          ${p.venue ? `<div class="safebet-meta">📍 ${p.venue}</div>` : ''}
+        </div>
+        <div class="safebet-pick">
+          <div class="safebet-pick-line">${formatSafeBetLine(p.safe_bet)}</div>
+          <div class="safebet-pick-prob">${p.safe_bet.probability}% confidence</div>
+        </div>
+        <button type="button" class="safebet-copy-btn" onclick="copySafeBet(${i}, this)">Copy</button>
+      </div>`).join('');
+    el.innerHTML = `
+      <div class="safebets-copyall-row">
+        <button type="button" class="safebet-copy-btn" id="copyAllSafeBetsBtn" onclick="copyAllSafeBets()">Copy all ${picks.length}</button>
+      </div>
+      ${rows}`;
+  }
 
   function setAccuracySport(sport) {
     _accuracySport = sport;

@@ -292,6 +292,87 @@ async def get_all_football_predictions(league_name: str = "Premier League",
     return results
 
 
+# Leagues swept for the cross-league safe-bets page. Excludes domestic cups —
+# their form/history is noisier (see CUP_TO_LEAGUE) so their "safe bet" picks
+# are less reliable, and cup rounds are sparse enough most days to add mostly
+# empty fetches rather than real picks.
+SAFE_BET_LEAGUES = [
+    "Premier League", "Championship", "La Liga", "Serie A",
+    "Bundesliga", "Ligue 1", "Champions League", "Europa League",
+    "Ghana Premier League",
+]
+
+
+async def get_safe_bets(target_date: str = None, sport: str = "football") -> list:
+    """
+    Sweep every league (football) or the NBA slate (basketball) for a given
+    date and collect each match's "safe bet" pick into one flat, sorted list
+    — the cross-league view for the Safe Bets page. Only real over-line
+    picks are included (the model's "under 0.5" fallback isn't a confident
+    pick, it's what's returned when nothing clears the 65% bar — see
+    predict_football_score's safe_bet logic). Matches already live/final
+    are excluded since the bet is no longer actionable. Sorted by
+    probability, highest confidence first.
+    """
+    picks = []
+
+    if sport == "basketball":
+        games = await get_all_basketball_predictions(target_date)
+        for g in games:
+            if g.get("is_live") or g.get("is_final"):
+                continue
+            sb = (g.get("prediction") or {}).get("safe_bet")
+            if not sb or sb.get("line") is None:
+                continue
+            picks.append({
+                "sport":          "basketball",
+                "fixture_id":     g.get("game_id"),
+                "league":         "NBA",
+                "home_team":      g.get("home_team"),
+                "away_team":      g.get("away_team"),
+                "home_team_logo": g.get("home_team_logo", ""),
+                "away_team_logo": g.get("away_team_logo", ""),
+                "match_time":     g.get("match_time") or g.get("date", ""),
+                "safe_bet":       sb,
+            })
+    else:
+        results = await asyncio.gather(
+            *[get_all_football_predictions(lg, target_date=target_date) for lg in SAFE_BET_LEAGUES],
+            return_exceptions=True,
+        )
+        for lg, matches in zip(SAFE_BET_LEAGUES, results):
+            if isinstance(matches, Exception):
+                print(f"[Safe bets] {lg}: {matches}")
+                continue
+            for m in matches:
+                if m.get("is_live") or m.get("is_final"):
+                    continue
+                sb = (m.get("prediction") or {}).get("safe_bet")
+                # The "under_0.5" fallback (nothing cleared the 65% over-line bar)
+                # is NOT a confident pick — exclude it. Its "line" is a string
+                # ("under_0.5") rather than a float; real over-line picks are
+                # always numeric. Note: football_model.py hardcodes
+                # "type": "over" even for this fallback, so that field can't
+                # be used to distinguish the two — line's type is the only signal.
+                if not sb or sb.get("line") is None or isinstance(sb.get("line"), str):
+                    continue
+                picks.append({
+                    "sport":          "football",
+                    "fixture_id":     m.get("fixture_id"),
+                    "league":         m.get("league") or lg,
+                    "home_team":      m.get("home_team"),
+                    "away_team":      m.get("away_team"),
+                    "home_team_logo": m.get("home_team_logo", ""),
+                    "away_team_logo": m.get("away_team_logo", ""),
+                    "match_time":     m.get("match_time", ""),
+                    "venue":          m.get("venue", ""),
+                    "safe_bet":       sb,
+                })
+
+    picks.sort(key=lambda p: p["safe_bet"].get("probability", 0), reverse=True)
+    return picks
+
+
 # ─── International Football ──────────────────────────────────────────────────
 
 import re

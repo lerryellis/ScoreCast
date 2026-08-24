@@ -14,6 +14,7 @@ from src.predictor import (
     get_all_basketball_predictions,
     get_all_international_predictions,
     predict_football_fixture,
+    get_safe_bets,
 )
 from src.fetcher import (
     get_espn_team_schedule_raw, get_espn_fixture_dates_for_month,
@@ -98,6 +99,19 @@ async def football_predictions(
             target_date=date,
         )
         return {"sport": "football", "league": league, "matches": predictions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/safe-bets")
+async def safe_bets(
+    date:  str = Query(None),
+    sport: str = Query("football"),
+):
+    """Cross-league sweep of every match's "safe bet" pick — the Safe Bets page."""
+    try:
+        picks = await get_safe_bets(target_date=date, sport=sport)
+        return {"sport": sport, "date": date, "picks": picks}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

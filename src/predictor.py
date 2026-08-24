@@ -303,6 +303,14 @@ SAFE_BET_LEAGUES = [
 ]
 
 
+# Safe Bets sweeps ~9 leagues concurrently per request — expensive enough
+# (several seconds) that it's worth a short server-side cache rather than
+# recomputing on every page load. 5 min balances freshness (kickoffs/live
+# status can change) against not hammering ESPN on every visit.
+SAFE_BETS_CACHE_TTL = 300
+_safe_bets_cache: dict = {}   # {(date, sport): (fetched_at_monotonic, picks)}
+
+
 async def get_safe_bets(target_date: str = None, sport: str = "football") -> list:
     """
     Sweep every league (football) or the NBA slate (basketball) for a given
@@ -313,7 +321,23 @@ async def get_safe_bets(target_date: str = None, sport: str = "football") -> lis
     predict_football_score's safe_bet logic). Matches already live/final
     are excluded since the bet is no longer actionable. Sorted by
     probability, highest confidence first.
+
+    Cached per (date, sport) for SAFE_BETS_CACHE_TTL seconds — see above.
     """
+    import time
+    from datetime import date as _date
+    cache_key = (target_date or _date.today().isoformat(), sport)
+    cached = _safe_bets_cache.get(cache_key)
+    if cached and (time.monotonic() - cached[0]) < SAFE_BETS_CACHE_TTL:
+        return cached[1]
+
+    picks = await _sweep_safe_bets(target_date, sport)
+    _safe_bets_cache[cache_key] = (time.monotonic(), picks)
+    return picks
+
+
+async def _sweep_safe_bets(target_date: str = None, sport: str = "football") -> list:
+    """Uncached implementation — see get_safe_bets."""
     picks = []
 
     if sport == "basketball":

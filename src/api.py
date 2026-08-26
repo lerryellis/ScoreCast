@@ -284,14 +284,23 @@ async def fixture_dates(
 ):
     """Return list of dates that have fixtures for a league in a given month."""
     from datetime import date as _date
+    from src.config import MULTI_SLUG_LEAGUES
     today = _date.today()
     y = year  or today.year
     m = month or today.month
     league_slug = ESPN_FOOTBALL_LEAGUES.get(league)
     if not league_slug:
         return {"dates": []}
+    # Champions/Europa League merge qualifying + league-phase (+ women's)
+    # slugs — same fixtures the predictions endpoint merges (see
+    # get_all_football_predictions) — otherwise the calendar never
+    # highlights days that only have qualifying-round or women's games.
+    slugs = MULTI_SLUG_LEAGUES.get(league, [league_slug])
     try:
-        dates = await get_espn_fixture_dates_for_month(league_slug, y, m)
+        date_lists = await asyncio.gather(
+            *[get_espn_fixture_dates_for_month(s, y, m) for s in slugs]
+        )
+        dates = sorted({d for sub in date_lists for d in sub})
         return {"league": league, "year": y, "month": m, "dates": dates}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

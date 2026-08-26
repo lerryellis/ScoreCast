@@ -69,6 +69,10 @@ ESPN_FOOTBALL_LEAGUES = {
 MULTI_SLUG_LEAGUES = {
     "International Clubs UEFA Champions League Men":   ["UEFA.CHAMPIONS", "UEFA.CHAMPIONS_QUAL"],
     "International Clubs UEFA Champions League Women": ["uefa.wchampions", "uefa.wchampions_qual"],
+    # Same split confirmed for Europa League (verified live: qualifying
+    # play-off second legs on 2026-08-27 were 0 under UEFA.EUROPA alone,
+    # 12 fixtures under UEFA.EUROPA_QUAL). No Women's Europa League exists.
+    "Europa League": ["UEFA.EUROPA", "UEFA.EUROPA_QUAL"],
 }
 
 # ESPN's scoreboard endpoint returns its own display name for each league

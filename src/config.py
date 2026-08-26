@@ -19,7 +19,7 @@ FOOTBALL_DATA_COMPETITIONS = {
     "Serie A":              "SA",
     "Bundesliga":           "BL1",
     "Ligue 1":              "FL1",
-    "Champions League":     "CL",
+    "International Clubs UEFA Champions League Men": "CL",
     # Europa League not on free tier; Ghana PL not covered
 }
 
@@ -30,7 +30,7 @@ FOOTBALL_LEAGUES = {
     "Serie A":              {"id": 135, "country": "Italy"},
     "Bundesliga":           {"id": 78,  "country": "Germany"},
     "Ligue 1":              {"id": 61,  "country": "France"},
-    "Champions League":     {"id": 2,   "country": "Europe"},
+    "International Clubs UEFA Champions League Men": {"id": 2, "country": "Europe"},
     "Ghana Premier League": {"id": 169, "country": "Ghana"},
 }
 
@@ -42,7 +42,8 @@ ESPN_FOOTBALL_LEAGUES = {
     "Serie A":              "ita.1",
     "Bundesliga":           "ger.1",
     "Ligue 1":              "fra.1",
-    "Champions League":     "UEFA.CHAMPIONS",
+    "International Clubs UEFA Champions League Men":   "UEFA.CHAMPIONS",
+    "International Clubs UEFA Champions League Women": "uefa.wchampions",
     "Europa League":        "UEFA.EUROPA",
     "FA Cup":               "eng.fa",
     "EFL Cup":              "eng.league_cup",
@@ -51,6 +52,23 @@ ESPN_FOOTBALL_LEAGUES = {
     "DFB Pokal":            "ger.dfb_pokal",
     "Coupe de France":      "fra.coupe_de_france",
     "Ghana Premier League": "gha.1",
+}
+
+# Some competitions run their pre-tournament stage under a SEPARATE ESPN
+# slug from the main one — the Champions League's qualifying/play-off
+# rounds (knockout ties played before the league phase even exists) use
+# distinct slugs from the league-phase competition itself. Verified live
+# (2026-08-26): ESPN_FOOTBALL_LEAGUES' plain "UEFA.CHAMPIONS"/
+# "uefa.wchampions" slugs had zero fixtures on a day when real play-off
+# second legs were being played (Fenerbahçe vs Lyon, Real Madrid vs Ajax,
+# etc.) — those were under "UEFA.CHAMPIONS_QUAL"/"uefa.wchampions_qual"
+# instead. Leagues listed here get fixtures merged from every slug in the
+# list (see get_all_football_predictions) rather than just the primary one,
+# so the competition shows real games year-round instead of going empty
+# for the ~6 weeks/year the tournament is in its qualifying rounds.
+MULTI_SLUG_LEAGUES = {
+    "International Clubs UEFA Champions League Men":   ["UEFA.CHAMPIONS", "UEFA.CHAMPIONS_QUAL"],
+    "International Clubs UEFA Champions League Women": ["uefa.wchampions", "uefa.wchampions_qual"],
 }
 
 # ESPN's scoreboard endpoint returns its own display name for each league
@@ -67,7 +85,8 @@ ESPN_LEAGUE_DISPLAY_NAME = {
     "Serie A":              "Italian Serie A",
     "Bundesliga":           "German Bundesliga",
     "Ligue 1":              "French Ligue 1",
-    "Champions League":     "UEFA Champions League",
+    "International Clubs UEFA Champions League Men":   "UEFA Champions League",
+    "International Clubs UEFA Champions League Women": "UEFA Women's Champions League",
     "Ghana Premier League": "Ghanaian Premier League",
 }
 
@@ -123,8 +142,9 @@ ESPN_CUP_SLUGS = {
     "ita.1":  ["ita.coppa_italia", "UEFA.CHAMPIONS", "UEFA.EUROPA"],
     "ger.1":  ["ger.dfb_pokal", "UEFA.CHAMPIONS", "UEFA.EUROPA"],
     "fra.1":  ["fra.coupe_de_france", "UEFA.CHAMPIONS", "UEFA.EUROPA"],
-    "UEFA.CHAMPIONS": [],  # already a cup competition
-    "UEFA.EUROPA":    [],
+    "UEFA.CHAMPIONS":   [],  # already a cup competition
+    "UEFA.EUROPA":      [],
+    "uefa.wchampions":  [],  # UEFA Women's Champions League — no domestic-cup crossover tracked
     "gha.1":  [],
 }
 

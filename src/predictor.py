@@ -171,6 +171,7 @@ async def get_all_football_predictions(league_name: str = "Premier League",
                                         target_date: str = None) -> list:
     """Fetch today's fixtures for a league via ESPN and predict all of them."""
     from datetime import date as _date
+    from src.config import MULTI_SLUG_LEAGUES
     league_slug = ESPN_FOOTBALL_LEAGUES.get(league_name)
     if not league_slug:
         return []
@@ -178,12 +179,18 @@ async def get_all_football_predictions(league_name: str = "Premier League",
     date_str = target_date or _date.today().isoformat()
 
     from src.database import get_bias_factors
-    fixtures, standings, fd_matches, bias = await asyncio.gather(
-        get_espn_soccer_fixtures(league_slug, target_date),
+    # Some competitions (Champions League) run qualifying/play-off rounds
+    # under a separate ESPN slug from the league-phase competition itself —
+    # merge fixtures from every slug so the tab shows real games whether
+    # the tournament is mid-qualifying or in its league phase.
+    fixture_slugs = MULTI_SLUG_LEAGUES.get(league_name, [league_slug])
+    fixture_lists, standings, fd_matches, bias = await asyncio.gather(
+        asyncio.gather(*[get_espn_soccer_fixtures(s, target_date) for s in fixture_slugs]),
         get_espn_standings(league_slug),
         get_football_data_ht_scores(date_str),
         get_bias_factors(),
     )
+    fixtures = [f for sub in fixture_lists for f in sub]
 
     # Pick league-specific calibration if available, else global
     league_bias = bias.get("leagues", {}).get(league_name) or bias.get("global", {})
@@ -298,8 +305,10 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 # empty fetches rather than real picks.
 SAFE_BET_LEAGUES = [
     "Premier League", "Championship", "La Liga", "Serie A",
-    "Bundesliga", "Ligue 1", "Champions League", "Europa League",
-    "Ghana Premier League",
+    "Bundesliga", "Ligue 1",
+    "International Clubs UEFA Champions League Men",
+    "International Clubs UEFA Champions League Women",
+    "Europa League", "Ghana Premier League",
 ]
 
 

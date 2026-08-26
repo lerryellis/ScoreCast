@@ -19,7 +19,7 @@ FOOTBALL_DATA_COMPETITIONS = {
     "Serie A":              "SA",
     "Bundesliga":           "BL1",
     "Ligue 1":              "FL1",
-    "International Clubs UEFA Champions League Men": "CL",
+    "Champions League": "CL",
     # Europa League not on free tier; Ghana PL not covered
 }
 
@@ -30,7 +30,7 @@ FOOTBALL_LEAGUES = {
     "Serie A":              {"id": 135, "country": "Italy"},
     "Bundesliga":           {"id": 78,  "country": "Germany"},
     "Ligue 1":              {"id": 61,  "country": "France"},
-    "International Clubs UEFA Champions League Men": {"id": 2, "country": "Europe"},
+    "Champions League": {"id": 2, "country": "Europe"},
     "Ghana Premier League": {"id": 169, "country": "Ghana"},
 }
 
@@ -42,8 +42,7 @@ ESPN_FOOTBALL_LEAGUES = {
     "Serie A":              "ita.1",
     "Bundesliga":           "ger.1",
     "Ligue 1":              "fra.1",
-    "International Clubs UEFA Champions League Men":   "UEFA.CHAMPIONS",
-    "International Clubs UEFA Champions League Women": "uefa.wchampions",
+    "Champions League":     "UEFA.CHAMPIONS",
     "Europa League":        "UEFA.EUROPA",
     "FA Cup":               "eng.fa",
     "EFL Cup":              "eng.league_cup",
@@ -66,14 +65,27 @@ ESPN_FOOTBALL_LEAGUES = {
 # list (see get_all_football_predictions) rather than just the primary one,
 # so the competition shows real games year-round instead of going empty
 # for the ~6 weeks/year the tournament is in its qualifying rounds.
+#
+# "Champions League" is one dropdown entry covering all four slugs (men's +
+# women's, league phase + qualifying) rather than separate Men/Women
+# entries — keeps the league dropdown from growing indefinitely. Individual
+# matches are tagged is_women (see WOMENS_SLUGS) so the UI can still tell
+# them apart on the match card itself.
 MULTI_SLUG_LEAGUES = {
-    "International Clubs UEFA Champions League Men":   ["UEFA.CHAMPIONS", "UEFA.CHAMPIONS_QUAL"],
-    "International Clubs UEFA Champions League Women": ["uefa.wchampions", "uefa.wchampions_qual"],
-    # Same split confirmed for Europa League (verified live: qualifying
-    # play-off second legs on 2026-08-27 were 0 under UEFA.EUROPA alone,
-    # 12 fixtures under UEFA.EUROPA_QUAL). No Women's Europa League exists.
+    "Champions League": [
+        "UEFA.CHAMPIONS", "UEFA.CHAMPIONS_QUAL",
+        "uefa.wchampions", "uefa.wchampions_qual",
+    ],
+    # Same qualifying-slug split confirmed for Europa League (verified live:
+    # play-off second legs on 2026-08-27 were 0 under UEFA.EUROPA alone, 12
+    # fixtures under UEFA.EUROPA_QUAL). No Women's Europa League exists.
     "Europa League": ["UEFA.EUROPA", "UEFA.EUROPA_QUAL"],
 }
+
+# Slugs that belong to a women's competition — used to tag is_women on each
+# fixture (see predictor.get_all_football_predictions) so match cards can
+# show a "W" badge without needing a separate dropdown entry per gender.
+WOMENS_SLUGS = {"uefa.wchampions", "uefa.wchampions_qual"}
 
 # ESPN's scoreboard endpoint returns its own display name for each league
 # (e.g. "English Premier League", "Spanish LALIGA") which is what gets stored
@@ -89,9 +101,13 @@ ESPN_LEAGUE_DISPLAY_NAME = {
     "Serie A":              "Italian Serie A",
     "Bundesliga":           "German Bundesliga",
     "Ligue 1":              "French Ligue 1",
-    "International Clubs UEFA Champions League Men":   "UEFA Champions League",
-    "International Clubs UEFA Champions League Women": "UEFA Women's Champions League",
     "Ghana Premier League": "Ghanaian Premier League",
+    # No "Champions League" entry: that dropdown key now covers 4 different
+    # ESPN display names (men's/women's x league-phase/qualifying), so a
+    # 1:1 mapping doesn't apply — normalize_league_name() falls through
+    # unchanged for each, and bias calibration buckets them separately
+    # (arguably more correct anyway: qualifying-round and league-phase
+    # scoring patterns differ enough to not want them pooled).
 }
 
 # Reverse of the above — maps ESPN's stored display name back to our short

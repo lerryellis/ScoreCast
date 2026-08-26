@@ -665,6 +665,13 @@
     color: var(--subtext);
   }
   .card-header .league-name { font-weight: 600; letter-spacing: 0.3px; }
+  .women-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #e91e8c; color: #fff;
+    font-size: 10px; font-weight: 800; line-height: 1;
+    vertical-align: middle; margin-left: 2px;
+  }
   .match-time {
     background: var(--border);
     padding: 3px 10px;
@@ -1259,8 +1266,7 @@
             <option>Serie A</option>
             <option>Bundesliga</option>
             <option>Ligue 1</option>
-            <option>International Clubs UEFA Champions League Men</option>
-            <option>International Clubs UEFA Champions League Women</option>
+            <option>Champions League</option>
             <option>Europa League</option>
             <option>FA Cup</option>
             <option>EFL Cup</option>
@@ -2065,7 +2071,7 @@
       return `
         <div class="match-card" style="animation-delay:${delay}s;cursor:pointer" onclick="openMatchModal('${m.fixture_id}')">
           <div class="card-header">
-            <span class="league-name">⚽ ${m.league}</span>
+            <span class="league-name">⚽ ${m.league}${m.is_women ? ' <span class="women-badge" title="Women\'s competition">W</span>' : ''}</span>
             <span class="match-time">${formatTime(m.match_time)}</span>
           </div>
           <div class="card-body">
@@ -2329,10 +2335,7 @@
 
   const ALL_LEAGUES = [
     'Premier League','Championship','La Liga','Serie A',
-    'Bundesliga','Ligue 1',
-    'International Clubs UEFA Champions League Men',
-    'International Clubs UEFA Champions League Women',
-    'Europa League'
+    'Bundesliga','Ligue 1','Champions League','Europa League'
   ];
 
   async function loadFlashcards() {
@@ -2466,7 +2469,7 @@
     // ── Header ──
     const leagueRow = `
       <div class="modal-league-row">
-        <span>${sportIcon} ${m.league || 'NBA'}</span>
+        <span>${sportIcon} ${m.league || 'NBA'}${m.is_women ? ' <span class="women-badge" title="Women\'s competition">W</span>' : ''}</span>
         ${m.match_time ? `<span>·</span><span>${formatTime(m.match_time)}</span>` : ''}
         ${m.status ? `<span>·</span><span>${m.status}</span>` : m.status_bball ? `<span>·</span><span>${m.status_bball}</span>` : ''}
         ${m.venue ? `<span class="modal-venue">📍 ${m.venue}</span>` : ''}
@@ -3101,7 +3104,7 @@
       <div class="safebet-row" style="animation-delay:${i * 0.03}s">
         <div class="safebet-rank">${i + 1}</div>
         <div class="safebet-main">
-          <div class="safebet-league">${p.league}${p.match_time ? ' · ' + formatTime(p.match_time) : ''}</div>
+          <div class="safebet-league">${p.league}${p.is_women ? ' <span class="women-badge" title="Women\'s competition">W</span>' : ''}${p.match_time ? ' · ' + formatTime(p.match_time) : ''}</div>
           <div class="safebet-teams">${p.home_team} vs ${p.away_team}</div>
           ${p.venue ? `<div class="safebet-meta">📍 ${p.venue}</div>` : ''}
         </div>

@@ -16,7 +16,7 @@ from src.features.international import build_international_features
 from src.features.basketball import build_basketball_features
 from src.models.football_model import predict_football_score
 from src.models.basketball_model import predict_basketball_score
-from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES, ESPN_INTERNATIONAL_LEAGUES, CUP_TO_LEAGUE
+from src.config import FOOTBALL_LEAGUES, ESPN_FOOTBALL_LEAGUES, ESPN_INTERNATIONAL_LEAGUES, CUP_TO_LEAGUE, WOMENS_SLUGS
 
 # ESPN's standings table lists every team at rank 1..N (alphabetical/seeded)
 # before any games are played — not a real position. Don't trust "rank" for
@@ -261,6 +261,7 @@ async def get_all_football_predictions(league_name: str = "Premier League",
                     "h2h":           h2h[:5],
                     "prediction_locked": True,
                 }
+                pred["is_women"] = fixture.get("league_slug", "") in WOMENS_SLUGS
                 results.append(pred)
                 continue
 
@@ -269,6 +270,7 @@ async def get_all_football_predictions(league_name: str = "Premier League",
                 home_bias=home_bias, away_bias=away_bias,
                 rho_factor=rho_factor,
             )
+            pred["is_women"] = fixture.get("league_slug", "") in WOMENS_SLUGS
 
             # Enrich with HT scores from football-data.org (better source than ESPN)
             fd = match_ht_to_fixture(fd_matches, fixture["home_team"], fixture["away_team"])
@@ -306,9 +308,7 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 SAFE_BET_LEAGUES = [
     "Premier League", "Championship", "La Liga", "Serie A",
     "Bundesliga", "Ligue 1",
-    "International Clubs UEFA Champions League Men",
-    "International Clubs UEFA Champions League Women",
-    "Europa League", "Ghana Premier League",
+    "Champions League", "Europa League", "Ghana Premier League",
 ]
 
 
@@ -399,6 +399,7 @@ async def _sweep_safe_bets(target_date: str = None, sport: str = "football") -> 
                     "away_team_logo": m.get("away_team_logo", ""),
                     "match_time":     m.get("match_time", ""),
                     "venue":          m.get("venue", ""),
+                    "is_women":       m.get("is_women", False),
                     "safe_bet":       sb,
                 })
 

@@ -1,5 +1,6 @@
 """
-Generic in-memory TTL cache for ESPN fetches, with request coalescing.
+TTL cache for ESPN fetches — in-memory fast path backed by a persistent
+Supabase layer, with request coalescing.
 
 Why this exists: every page load / refresh-button click re-fetches fixtures,
 standings, team form, H2H, and calendar data from ESPN — with dozens of
@@ -8,7 +9,7 @@ avoidable traffic to a free, unauthenticated, rate-limited public API (see
 CLAUDE.md's "Known issue: ESPN occasionally 403s" note — this is the actual
 fix for that, not a header trick).
 
-Two things this needs to get right:
+Three things this needs to get right:
 1. Adaptive TTL — a live match's score needs to look fresh within a minute
    or so; a team's "last 5 games" barely changes within a whole day. One
    flat TTL for everything is either too slow for live data or needlessly
@@ -18,17 +19,19 @@ Two things this needs to get right:
    a cache entry expires, they should trigger ONE upstream fetch, not 20.
    Callers arriving while a fetch is already in flight for the same key
    await that same in-flight call instead of starting their own.
-
-This is a single-process in-memory cache (module-level dict), matching the
-pattern already used for bias calibration (database.py's _bias_cache) and
-the Safe Bets sweep (predictor.py's _safe_bets_cache) — appropriate for
-this app's single-instance Railway deployment. It does NOT persist across
-restarts/deploys, which is fine: worst case after a deploy is one full
-price of cold-cache fetches, same as today.
+3. Persistence across restarts — the in-memory layer (module-level dict) is
+   wiped on every Railway restart/redeploy, which happens often during
+   active development. Supabase's `espn_cache` table backs it: on an
+   in-memory miss, check there before ever calling ESPN, so a freshly
+   booted process can still serve anything still within its TTL from
+   before the restart instead of everyone hitting a cold cache. The
+   in-memory layer stays the fast path (no network at all on a hit) —
+   Supabase is only consulted on an in-memory miss.
 """
 
 import asyncio
 import functools
+import json
 import time
 from datetime import date as _date
 
@@ -44,12 +47,13 @@ def is_today(target_date) -> bool:
     return target_date == _date.today().isoformat()
 
 
-async def cached(key, ttl: int, fetch):
+async def cached(key: str, ttl: int, fetch):
     """
-    Return the cached value for `key` if still fresh, otherwise call the
-    zero-arg async `fetch()` callable, cache its result for `ttl` seconds,
-    and return it. Concurrent callers for the same key while a fetch is
-    already running share that one in-flight call instead of duplicating it.
+    Return the cached value for `key` if still fresh (checking the
+    in-memory layer, then Supabase), otherwise call the zero-arg async
+    `fetch()` callable, persist its result, and return it. Concurrent
+    callers for the same key while a fetch is already running share that
+    one in-flight call instead of duplicating it.
     """
     now = time.monotonic()
     entry = _store.get(key)
@@ -60,12 +64,27 @@ async def cached(key, ttl: int, fetch):
     if existing is not None:
         return await existing
 
-    task = asyncio.ensure_future(fetch())
+    async def _resolve():
+        # Lazy import: src.database imports src.fetcher (which imports this
+        # module) at call time in various places, so importing it at
+        # cache.py's module level would create a circular import.
+        from src.database import get_espn_cache_entry, set_espn_cache_entry
+
+        db_hit = await get_espn_cache_entry(key)
+        if db_hit is not None:
+            value, remaining = db_hit
+            _store[key] = (time.monotonic() + remaining, value)
+            return value
+
+        result = await fetch()
+        _store[key] = (time.monotonic() + ttl, result)
+        await set_espn_cache_entry(key, result, ttl)
+        return result
+
+    task = asyncio.ensure_future(_resolve())
     _inflight[key] = task
     try:
-        result = await task
-        _store[key] = (time.monotonic() + ttl, result)
-        return result
+        return await task
     finally:
         _inflight.pop(key, None)
 
@@ -85,7 +104,13 @@ def espn_cache(ttl_fn):
     def decorator(fn):
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
-            key = (fn.__module__, fn.__qualname__, args, tuple(sorted(kwargs.items())))
+            # A JSON string (not a raw tuple) so it doubles as the Supabase
+            # primary key — args/kwargs are always plain strings/ints/None
+            # across every decorated function, so this is always valid JSON.
+            key = json.dumps(
+                [fn.__module__, fn.__qualname__, list(args), sorted(kwargs.items())],
+                sort_keys=True, default=str,
+            )
             ttl = ttl_fn(*args, **kwargs)
             return await cached(key, ttl, lambda: fn(*args, **kwargs))
         return wrapper

@@ -69,3 +69,18 @@ CREATE TABLE IF NOT EXISTS team_ratings (
 
 -- Existing deployments (table already created without this column):
 ALTER TABLE team_ratings ADD COLUMN IF NOT EXISTS midfield_elo FLOAT NOT NULL DEFAULT 1500;
+
+-- Persistent backing store for src/cache.py's ESPN fetch cache. The
+-- in-memory layer (per-process, wiped on every Railway restart/redeploy)
+-- stays the fast first check; this survives restarts, so a fresh process
+-- boot doesn't have to re-fetch from ESPN for anything still within its
+-- TTL from before the restart. One row per cache key.
+CREATE TABLE IF NOT EXISTS espn_cache (
+  cache_key   TEXT PRIMARY KEY,
+  data        JSONB NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Fast lookup for cleanup/expiry checks
+CREATE INDEX IF NOT EXISTS espn_cache_expires_idx ON espn_cache (expires_at);

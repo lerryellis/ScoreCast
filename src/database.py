@@ -5,7 +5,7 @@ and provides scorecard aggregates for the accuracy tab.
 """
 
 import asyncio
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 from typing import Optional
 
@@ -398,6 +398,86 @@ async def resolve_predictions() -> int:
                 print(f"[Elo update error] {e}")
 
     return count
+
+
+# ── ESPN fetch cache (persistent backing store for src/cache.py) ───────────────
+#
+# The in-memory cache in src/cache.py is the fast path (no network at all on
+# a hit) but is wiped on every Railway restart/redeploy. This table is the
+# persistent layer behind it: on an in-memory miss, check here before ever
+# calling ESPN — a fresh process boot can still serve anything another
+# process (or this same one, before it restarted) already fetched and that
+# hasn't expired yet, instead of everyone hitting a cold cache after every
+# deploy.
+#
+# Every ESPN-cached fetch touches this table (read on miss, write after a
+# fresh fetch) — if it doesn't exist yet (migration not run), that's one
+# error per fetch call, which floods the logs. Warn once per process, then
+# go quiet, same degrade-gracefully pattern as team_ratings before its
+# migration was run.
+_espn_cache_table_missing_warned = False
+
+
+def _warn_espn_cache_table_missing_once(e: Exception) -> None:
+    global _espn_cache_table_missing_warned
+    if not _espn_cache_table_missing_warned:
+        _espn_cache_table_missing_warned = True
+        print(f"[ESPN cache] table not found (run supabase_schema.sql) — "
+              f"persistent caching inert, in-memory-only for this process. {e}")
+
+
+def _get_espn_cache_sync(key: str):
+    client = _get_client()
+    try:
+        rows = (
+            client.table("espn_cache")
+                  .select("data, expires_at")
+                  .eq("cache_key", key)
+                  .limit(1)
+                  .execute()
+        ).data
+    except Exception as e:
+        _warn_espn_cache_table_missing_once(e)
+        return None
+    if not rows:
+        return None
+    try:
+        expires_at = datetime.fromisoformat(rows[0]["expires_at"].replace("Z", "+00:00"))
+    except (KeyError, ValueError, TypeError):
+        return None
+    remaining = (expires_at - datetime.now(timezone.utc)).total_seconds()
+    if remaining <= 0:
+        return None   # expired — treat as a miss, let the caller re-fetch
+    return rows[0]["data"], remaining
+
+
+async def get_espn_cache_entry(key: str):
+    """
+    Return (value, seconds_remaining) for `key` if present and not expired,
+    else None. seconds_remaining is passed through to the in-memory layer
+    so a nearly-expired Supabase entry doesn't get treated as freshly-cached
+    for a full new TTL window.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    return await asyncio.to_thread(_get_espn_cache_sync, key)
+
+
+def _set_espn_cache_sync(key: str, value, ttl: int) -> None:
+    client = _get_client()
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat()
+    record = {"cache_key": key, "data": value, "expires_at": expires_at}
+    try:
+        client.table("espn_cache").upsert(record, on_conflict="cache_key").execute()
+    except Exception as e:
+        _warn_espn_cache_table_missing_once(e)
+
+
+async def set_espn_cache_entry(key: str, value, ttl: int) -> None:
+    """Best-effort: persist a freshly-fetched value so it survives a restart."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    await asyncio.to_thread(_set_espn_cache_sync, key, value, ttl)
 
 
 # ── Team Elo ratings ─────────────────────────────────────────────────────────

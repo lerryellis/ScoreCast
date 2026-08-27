@@ -16,6 +16,18 @@ HEADERS = {"x-apisports-key": API_FOOTBALL_KEY}
 ESPN_SOCCER_BASE   = "https://site.api.espn.com/apis/site/v2/sports/soccer"
 ESPN_STANDINGS_BASE = "https://site.api.espn.com/apis/v2/sports/soccer"
 
+# NOTE on ESPN 403s (investigated 2026-08-27): a plain httpx request
+# succeeds from a normal dev/residential IP but gets 403 Forbidden from
+# Railway's shared hosting IP — an IP-reputation block, not something this
+# app's request pattern causes. Tried spoofing a browser User-Agent as a
+# mitigation and verified live that it made things WORSE: the exact same
+# request that succeeds with httpx's default UA started failing with a
+# Chrome UA attached, even from the previously-working dev machine — ESPN's
+# WAF is almost certainly fingerprinting the mismatch between a claimed
+# browser UA and httpx's actual TLS/HTTP fingerprint, which reads as more
+# suspicious than an honest non-browser client. Do not add a spoofed
+# browser UA/header set here again without re-verifying live first.
+
 
 # ─── Football (ESPN) ──────────────────────────────────────────────────────────
 
@@ -25,13 +37,17 @@ async def get_espn_standings(league_slug: str) -> dict:
     Returns dict keyed by team_id → {rank, points, wins, draws, losses, games_played,
                                       goals_for, goals_against, goal_diff}
     """
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{ESPN_STANDINGS_BASE}/{league_slug}/standings",
-            timeout=15,
-        )
-        r.raise_for_status()
-        data = r.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{ESPN_STANDINGS_BASE}/{league_slug}/standings",
+                timeout=15,
+            )
+            r.raise_for_status()
+            data = r.json()
+    except httpx.HTTPError as e:
+        print(f"[ESPN standings] {league_slug}: {e}")
+        return {}
 
     standings = {}
     try:
@@ -56,19 +72,26 @@ async def get_espn_standings(league_slug: str) -> dict:
 
 
 async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] = None) -> list:
-    """Fetch today's soccer fixtures from ESPN for a given league."""
+    """Fetch today's soccer fixtures from ESPN for a given league.
+    Returns [] (not an exception) if ESPN is unreachable/blocking this
+    request — one league/slug being down shouldn't 500 the whole page,
+    especially now that several leagues merge multiple slugs per call."""
     if not target_date:
         target_date = date.today().isoformat()
     date_param = target_date.replace("-", "")  # ESPN expects YYYYMMDD
 
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
-            params={"dates": date_param},
-            timeout=15,
-        )
-        r.raise_for_status()
-        data = r.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
+                params={"dates": date_param},
+                timeout=15,
+            )
+            r.raise_for_status()
+            data = r.json()
+    except httpx.HTTPError as e:
+        print(f"[ESPN fixtures] {league_slug} {date_param}: {e}")
+        return []
 
     league_name = data.get("leagues", [{}])[0].get("name", "")
     fixtures = []
@@ -564,20 +587,27 @@ async def get_espn_fixture_dates_for_month(league_slug: str, year: int, month: i
     """
     Return a list of ISO date strings (YYYY-MM-DD) that have fixtures
     for the given league in a given month, using ESPN's scoreboard date-range query.
+    Returns [] (not an exception) on failure — leagues that merge multiple
+    slugs (see MULTI_SLUG_LEAGUES) shouldn't lose the calendar entirely
+    because one slug's request failed.
     """
     import calendar as _cal
     last_day = _cal.monthrange(year, month)[1]
     start = f"{year}{month:02d}01"
     end   = f"{year}{month:02d}{last_day:02d}"
 
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
-            params={"dates": f"{start}-{end}"},
-            timeout=20,
-        )
-        r.raise_for_status()
-        data = r.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
+                params={"dates": f"{start}-{end}"},
+                timeout=20,
+            )
+            r.raise_for_status()
+            data = r.json()
+    except httpx.HTTPError as e:
+        print(f"[ESPN fixture-dates] {league_slug} {year}-{month}: {e}")
+        return []
 
     dates = set()
     for event in data.get("events", []):

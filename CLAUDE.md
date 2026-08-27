@@ -242,7 +242,12 @@ Display: `predictor._team_ratings_display()` converts the raw Elo into `{attack,
 
 Two `asyncio.create_task()` loops start when the app boots (not GitHub Actions — these run inside the same long-lived process, so they stop if the app restarts and resume fresh on the next boot):
 - **`_auto_resolve_loop()`** — resolves yesterday's predictions once daily at 00:05 UTC, then retrains the ML models.
-- **`_cache_warm_loop()`** — proactively refreshes every tracked ESPN slug's fixtures (+ NBA scoreboard) every 5 minutes, so a visitor's page load hits an already-warm `src/cache.py` cache instead of triggering a live ESPN fetch during their own request. Deliberately not on the cache's own 30s "live day" TTL — running that aggressively 24/7 regardless of actual traffic would itself become a large constant source of ESPN load, which is the exact problem the cache exists to avoid. A real visitor refreshing during a live match still gets sub-30s freshness from the normal reactive cache on top of this baseline.
+- **`_cache_warm_loop()`** — proactively keeps `src/cache.py` warm so a visitor's page load never triggers a live ESPN fetch during their own request. Three speeds, not one flat interval:
+  1. **Daily sweep** (24h) — every tracked ESPN slug's fixtures for today, catching schedule/data changes (postponements, new fixtures, kickoff-time changes). Also narrows down which of the ~21 tracked slugs actually have a fixture today at all — most don't, on a given day.
+  2. **Discovery pass** (5 min, only across today's slugs from #1) — cheap check for which fixtures have gone live.
+  3. **Live poll** (30s, ONLY while #2 found something live) — fast refresh of just the live slugs. Sits completely idle (zero ESPN calls) whenever nothing is live, which is most of the day.
+
+  This replaced an earlier flat "refresh everything every 5 minutes" version — polling all ~21 slugs on a fixed cadence 24/7 regardless of whether anything's actually happening would itself become a large, constant source of ESPN traffic, the exact problem the cache exists to avoid. Live game data has one source, ESPN — its normal scoreboard endpoint (the same one used for fixtures) returns `is_live`/score/clock fields once a match starts. No other source currently supplies live in-play status (see the fallback-provider evaluation above).
 
 ## Key Environment Variables
 ```

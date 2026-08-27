@@ -236,6 +236,12 @@ Display: `predictor._team_ratings_display()` converts the raw Elo into `{attack,
 
 `.github/workflows/resolve-predictions.yml` — cron every 15 min (13:00–22:00 UTC, covers European kickoffs), hits `POST /api/admin/resolve` on the Railway deployment to mark predictions as won/lost once matches finish. This is the *only* scheduled job; it now also triggers Elo rating updates as a side effect of resolving each match. There is no separate "season sweep" job — the promotion/tier-fallback logic above is fully reactive (resolves itself on request), by design, rather than needing a batch job to run at a season boundary.
 
+## In-process background loops (api.py `startup`)
+
+Two `asyncio.create_task()` loops start when the app boots (not GitHub Actions — these run inside the same long-lived process, so they stop if the app restarts and resume fresh on the next boot):
+- **`_auto_resolve_loop()`** — resolves yesterday's predictions once daily at 00:05 UTC, then retrains the ML models.
+- **`_cache_warm_loop()`** — proactively refreshes every tracked ESPN slug's fixtures (+ NBA scoreboard) every 5 minutes, so a visitor's page load hits an already-warm `src/cache.py` cache instead of triggering a live ESPN fetch during their own request. Deliberately not on the cache's own 30s "live day" TTL — running that aggressively 24/7 regardless of actual traffic would itself become a large constant source of ESPN load, which is the exact problem the cache exists to avoid. A real visitor refreshing during a live match still gets sub-30s freshness from the normal reactive cache on top of this baseline.
+
 ## Key Environment Variables
 ```
 API_FOOTBALL_KEY    # from api-football.com — legacy/mostly unused now, see Data Sources above

@@ -308,7 +308,8 @@ async def get_all_football_predictions(league_name: str = "Premier League",
 SAFE_BET_LEAGUES = [
     "Premier League", "Championship", "La Liga", "Serie A",
     "Bundesliga", "Ligue 1",
-    "Champions League", "Europa League", "Ghana Premier League",
+    "Champions League", "Europa League", "Conference League",
+    "Ghana Premier League",
 ]
 
 

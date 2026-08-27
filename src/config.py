@@ -44,6 +44,7 @@ ESPN_FOOTBALL_LEAGUES = {
     "Ligue 1":              "fra.1",
     "Champions League":     "UEFA.CHAMPIONS",
     "Europa League":        "UEFA.EUROPA",
+    "Conference League":    "UEFA.EUROPA.CONF",
     "FA Cup":               "eng.fa",
     "EFL Cup":              "eng.league_cup",
     "Copa del Rey":         "esp.copa_del_rey",
@@ -80,6 +81,11 @@ MULTI_SLUG_LEAGUES = {
     # play-off second legs on 2026-08-27 were 0 under UEFA.EUROPA alone, 12
     # fixtures under UEFA.EUROPA_QUAL). No Women's Europa League exists.
     "Europa League": ["UEFA.EUROPA", "UEFA.EUROPA_QUAL"],
+    # Same split again for the Conference League (verified live: 1-23
+    # qualifying fixtures on 2026-08-26/27 under UEFA.EUROPA.CONF_QUAL,
+    # separate from the UEFA.EUROPA.CONF league-phase slug). No Women's
+    # Conference League exists either.
+    "Conference League": ["UEFA.EUROPA.CONF", "UEFA.EUROPA.CONF_QUAL"],
 }
 
 # Slugs that belong to a women's competition — used to tag is_women on each

@@ -36,44 +36,97 @@ app.add_middleware(
 
 async def _cache_warm_loop():
     """
-    Proactively refresh today's fixtures for every tracked league (+ NBA)
-    on a fixed interval, so a visitor's page load never has to wait on (or
-    risk a rate-limited) live ESPN fetch — they hit an already-warm cache
-    populated by this loop, not their own request.
+    Three-speed proactive refresh, so a visitor's page load never has to
+    wait on (or risk a rate-limited) live ESPN fetch — they hit an
+    already-warm cache populated by this loop, not their own request:
 
-    Deliberately NOT on the 30s TTL_LIVE_DAY cadence — running that
-    aggressively 24/7 regardless of whether anyone's actually viewing would
-    itself become a large, constant source of ESPN traffic (the exact
-    problem this whole caching layer exists to avoid — see CLAUDE.md's
-    ESPN rate-limit notes). 5 minutes keeps a reasonable baseline "nobody
-    ever hits a cold cache" guarantee; a real visitor refreshing during a
-    live match still gets sub-30s freshness from the normal reactive cache
-    on top of this baseline.
+    1. Daily sweep (every 24h) — every tracked ESPN slug's fixtures for
+       today. This is what catches schedule/data changes: postponements,
+       newly-added fixtures, kickoff-time changes. Also narrows down which
+       slugs actually have a fixture today at all (usually a handful of
+       the ~20 tracked slugs, not all of them) — no point checking a slug
+       more often than daily if it has nothing scheduled.
+    2. Discovery pass (every 5 min, only across today's slugs from #1) —
+       cheap check for which of today's fixtures have gone live.
+    3. Live poll (every 30s, ONLY while #2 found something live) — fast
+       refresh of just the live slugs, so scores stay fresh during an
+       actual match. Sits idle (no ESPN calls at all) whenever nothing is
+       live — this is the "fallback timed interval only when live games
+       are detected" the whole design exists for, rather than polling
+       everything aggressively 24/7 regardless of whether anyone's
+       watching or anything's happening (which would itself become a
+       large, constant source of ESPN traffic — see CLAUDE.md's ESPN
+       rate-limit notes).
     """
     from src.config import ESPN_FOOTBALL_LEAGUES, MULTI_SLUG_LEAGUES
     from src.fetcher import get_espn_soccer_fixtures, get_espn_nba_scoreboard
+    import time as _time
 
-    WARM_INTERVAL = 300  # 5 minutes
+    DAILY_INTERVAL     = 86400  # 24h — schedule/data-change sweep
+    DISCOVERY_INTERVAL = 300    # 5 min — cheap "has anything gone live?" check
+    LIVE_INTERVAL      = 30     # matches TTL_LIVE_DAY — only runs while something's live
 
-    # Every distinct ESPN slug actually used, deduped — several
-    # MULTI_SLUG_LEAGUES entries reuse a league's base slug plus extra ones.
-    slugs = set(ESPN_FOOTBALL_LEAGUES.values())
+    all_slugs = set(ESPN_FOOTBALL_LEAGUES.values())
     for slug_list in MULTI_SLUG_LEAGUES.values():
-        slugs.update(slug_list)
+        all_slugs.update(slug_list)
+
+    todays_slugs: set = set()   # from the daily sweep — slugs with >=1 fixture today
+    live_slugs: set   = set()   # from the discovery pass — slugs with >=1 live fixture now
+    nba_live = False
+    # None (not 0.0) so the first loop iteration always runs both passes —
+    # time.monotonic()'s absolute value isn't guaranteed to start near zero,
+    # so "now - 0.0 >= INTERVAL" can't be relied on to be true on iteration 1.
+    last_daily = None
+    last_discovery = None
 
     while True:
+        now = _time.monotonic()
         try:
-            results = await asyncio.gather(
-                *[get_espn_soccer_fixtures(s) for s in slugs],
-                get_espn_nba_scoreboard(),
-                return_exceptions=True,
-            )
-            failed = sum(1 for r in results if isinstance(r, Exception))
-            print(f"[CacheWarm] refreshed {len(slugs)} football slugs + NBA "
-                  f"scoreboard ({failed} failed, tolerated)")
+            if last_daily is None or now - last_daily >= DAILY_INTERVAL:
+                results = await asyncio.gather(
+                    *[get_espn_soccer_fixtures(s) for s in all_slugs],
+                    return_exceptions=True,
+                )
+                todays_slugs = {
+                    s for s, r in zip(all_slugs, results)
+                    if not isinstance(r, Exception) and r
+                }
+                last_daily = now
+                last_discovery = None  # force an immediate discovery pass below too
+                print(f"[CacheWarm] daily sweep: {len(all_slugs)} slugs checked, "
+                      f"{len(todays_slugs)} have fixtures today")
+
+            if last_discovery is None or now - last_discovery >= DISCOVERY_INTERVAL:
+                targets = todays_slugs or all_slugs
+                results = await asyncio.gather(
+                    *[get_espn_soccer_fixtures(s) for s in targets],
+                    return_exceptions=True,
+                )
+                live_slugs = {
+                    s for s, r in zip(targets, results)
+                    if not isinstance(r, Exception) and any(f.get("is_live") for f in r)
+                }
+                nba_games = await get_espn_nba_scoreboard()
+                nba_live = (
+                    any(g.get("is_live") for g in nba_games)
+                    if not isinstance(nba_games, Exception) else False
+                )
+                last_discovery = now
+                if live_slugs or nba_live:
+                    print(f"[CacheWarm] live now: {sorted(live_slugs)}"
+                          f"{' + NBA' if nba_live else ''}")
+
+            elif live_slugs or nba_live:
+                # Fast refresh of ONLY the currently-live slugs, in between
+                # discovery passes.
+                tasks = [get_espn_soccer_fixtures(s) for s in live_slugs]
+                if nba_live:
+                    tasks.append(get_espn_nba_scoreboard())
+                await asyncio.gather(*tasks, return_exceptions=True)
         except Exception as e:
             print(f"[CacheWarm error] {e}")
-        await asyncio.sleep(WARM_INTERVAL)
+
+        await asyncio.sleep(LIVE_INTERVAL if (live_slugs or nba_live) else DISCOVERY_INTERVAL)
 
 
 async def _auto_resolve_loop():

@@ -183,14 +183,32 @@ async def get_all_football_predictions(league_name: str = "Premier League",
     # under a separate ESPN slug from the league-phase competition itself —
     # merge fixtures from every slug so the tab shows real games whether
     # the tournament is mid-qualifying or in its league phase.
+    #
+    # return_exceptions=True throughout: the fetch functions now raise on
+    # failure rather than swallowing it (needed so the cache in src/cache.py
+    # doesn't store a failure as if it were a real "no fixtures" answer) —
+    # so this is where a failed slug/standings/etc. gets tolerated instead
+    # of 500ing the whole request. Each result is checked below and treated
+    # as empty on failure.
     fixture_slugs = MULTI_SLUG_LEAGUES.get(league_name, [league_slug])
-    fixture_lists, standings, fd_matches, bias = await asyncio.gather(
-        asyncio.gather(*[get_espn_soccer_fixtures(s, target_date) for s in fixture_slugs]),
+    (fixture_lists, standings, fd_matches, bias) = await asyncio.gather(
+        asyncio.gather(*[get_espn_soccer_fixtures(s, target_date) for s in fixture_slugs],
+                       return_exceptions=True),
         get_espn_standings(league_slug),
         get_football_data_ht_scores(date_str),
         get_bias_factors(),
+        return_exceptions=True,
     )
-    fixtures = [f for sub in fixture_lists for f in sub]
+    if isinstance(fixture_lists, Exception):
+        fixture_lists = []
+    fixtures = [f for sub in fixture_lists if not isinstance(sub, Exception) for f in sub]
+    if isinstance(standings, Exception):
+        print(f"[Standings error] {league_slug}: {standings}")
+        standings = {}
+    if isinstance(fd_matches, Exception):
+        fd_matches = []
+    if isinstance(bias, Exception):
+        bias = {}
 
     # Pick league-specific calibration if available, else global
     league_bias = bias.get("leagues", {}).get(league_name) or bias.get("global", {})

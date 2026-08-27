@@ -150,9 +150,10 @@ async def intl_fixture_dates(
     m = month or today.month
     try:
         dates = await get_espn_fixture_dates_for_month(slug, y, m)
-        return {"year": y, "month": m, "dates": dates}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[Intl fixture-dates] {slug}: {e}")
+        dates = []
+    return {"year": y, "month": m, "dates": dates}
 
 
 @app.get("/api/predictions/basketball")
@@ -296,14 +297,16 @@ async def fixture_dates(
     # get_all_football_predictions) — otherwise the calendar never
     # highlights days that only have qualifying-round or women's games.
     slugs = MULTI_SLUG_LEAGUES.get(league, [league_slug])
-    try:
-        date_lists = await asyncio.gather(
-            *[get_espn_fixture_dates_for_month(s, y, m) for s in slugs]
-        )
-        dates = sorted({d for sub in date_lists for d in sub})
-        return {"league": league, "year": y, "month": m, "dates": dates}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # return_exceptions=True: one slug failing (e.g. an ESPN rate-limit hit)
+    # shouldn't blank out the whole calendar — merge whatever succeeded.
+    date_lists = await asyncio.gather(
+        *[get_espn_fixture_dates_for_month(s, y, m) for s in slugs],
+        return_exceptions=True,
+    )
+    dates = sorted({
+        d for sub in date_lists if not isinstance(sub, Exception) for d in sub
+    })
+    return {"league": league, "year": y, "month": m, "dates": dates}
 
 
 @app.get("/api/live-scores")

@@ -9,6 +9,18 @@ import asyncio
 from datetime import date, timedelta
 from typing import Optional
 from src.config import API_FOOTBALL_KEY, FOOTBALL_LEAGUES, FOOTBALL_DATA_KEY, THESPORTSDB_KEY
+from src.cache import espn_cache, is_today
+
+# TTL policy (seconds) for cached ESPN fetches — see src/cache.py for why.
+# Short: today's data, where a live score/status needs to look fresh.
+# Long: static/historical data that only changes when a match resolves.
+TTL_LIVE_DAY   = 30     # today's fixtures/scoreboard — live scores in play
+TTL_OTHER_DAY  = 3600   # any other single date — past/future, won't change
+TTL_STANDINGS  = 300    # table only moves after full-time whistles
+TTL_TEAM_FORM  = 900    # "last N games" — changes once per resolved match
+TTL_H2H        = 1800   # head-to-head meetings — essentially static day-to-day
+TTL_CALENDAR   = 1800   # month view fixture-dates, for the calendar highlight
+TTL_HISTORICAL = 21600  # a fully-past season's schedule never changes again
 
 FOOTBALL_BASE = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_FOOTBALL_KEY}
@@ -31,23 +43,23 @@ ESPN_STANDINGS_BASE = "https://site.api.espn.com/apis/v2/sports/soccer"
 
 # ─── Football (ESPN) ──────────────────────────────────────────────────────────
 
+@espn_cache(lambda league_slug: TTL_STANDINGS)
 async def get_espn_standings(league_slug: str) -> dict:
     """
     Fetch current league standings from ESPN.
     Returns dict keyed by team_id → {rank, points, wins, draws, losses, games_played,
                                       goals_for, goals_against, goal_diff}
+
+    Raises on failure (see get_espn_soccer_fixtures for why, now that this
+    is cached) — callers are responsible for tolerating it.
     """
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{ESPN_STANDINGS_BASE}/{league_slug}/standings",
-                timeout=15,
-            )
-            r.raise_for_status()
-            data = r.json()
-    except httpx.HTTPError as e:
-        print(f"[ESPN standings] {league_slug}: {e}")
-        return {}
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{ESPN_STANDINGS_BASE}/{league_slug}/standings",
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
 
     standings = {}
     try:
@@ -71,27 +83,30 @@ async def get_espn_standings(league_slug: str) -> dict:
     return standings
 
 
+@espn_cache(lambda league_slug, target_date=None: TTL_LIVE_DAY if is_today(target_date) else TTL_OTHER_DAY)
 async def get_espn_soccer_fixtures(league_slug: str, target_date: Optional[str] = None) -> list:
     """Fetch today's soccer fixtures from ESPN for a given league.
-    Returns [] (not an exception) if ESPN is unreachable/blocking this
-    request — one league/slug being down shouldn't 500 the whole page,
-    especially now that several leagues merge multiple slugs per call."""
+
+    Raises on failure rather than swallowing it — this matters now that the
+    result is cached (see src/cache.py): a caught-and-return-[] failure
+    would get cached as if "no fixtures" were a real, successful answer,
+    silently freezing a transient ESPN error for the full TTL. Callers that
+    fan out over multiple slugs (see MULTI_SLUG_LEAGUES) are the ones
+    responsible for tolerating one slug's failure — see
+    get_all_football_predictions's use of asyncio.gather(return_exceptions=True).
+    """
     if not target_date:
         target_date = date.today().isoformat()
     date_param = target_date.replace("-", "")  # ESPN expects YYYYMMDD
 
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
-                params={"dates": date_param},
-                timeout=15,
-            )
-            r.raise_for_status()
-            data = r.json()
-    except httpx.HTTPError as e:
-        print(f"[ESPN fixtures] {league_slug} {date_param}: {e}")
-        return []
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
+            params={"dates": date_param},
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
 
     league_name = data.get("leagues", [{}])[0].get("name", "")
     fixtures = []
@@ -247,6 +262,17 @@ async def get_espn_fixture_result(event_id: str, league_slug: str) -> dict:
     }
 
 
+def _schedule_raw_ttl(team_id, league_slug, season=None):
+    # Soccer seasons span two calendar years (season=2025 -> Aug 2025-May
+    # 2026), so "season < this year" isn't safely over yet — it could still
+    # be mid-season through mid-year. Only treat a season as fully-finished,
+    # immutable history once it's at least 2 years back from today; anything
+    # more recent (including no season param, i.e. "current") still needs
+    # the shorter TTL to notice newly-completed matches.
+    return TTL_HISTORICAL if (season and season <= date.today().year - 2) else TTL_TEAM_FORM
+
+
+@espn_cache(_schedule_raw_ttl)
 async def get_espn_team_schedule_raw(team_id: str, league_slug: str, season: int = None) -> list:
     """Return all ESPN events for a team in a given season (raw event dicts)."""
     params = {}
@@ -383,6 +409,7 @@ async def _schedule_with_season_fallback(team_id: str, slug: str,
     return merged, tier_by_id
 
 
+@espn_cache(lambda team_id, league_slug, n=10: TTL_TEAM_FORM)
 async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 10) -> list:
     """Fetch last N completed league matches for a team from ESPN."""
     events, tier_by_id = await _schedule_with_season_fallback(team_id, league_slug)
@@ -391,6 +418,7 @@ async def get_espn_team_match_history(team_id: str, league_slug: str, n: int = 1
     return matches[:n]
 
 
+@espn_cache(lambda team_id, league_slug, n=20: TTL_TEAM_FORM)
 async def get_espn_team_all_matches(team_id: str, league_slug: str, n: int = 20) -> list:
     """
     Fetch completed matches across ALL competitions (league + cups).
@@ -425,6 +453,7 @@ async def get_espn_team_all_matches(team_id: str, league_slug: str, n: int = 20)
     return unique[:n]
 
 
+@espn_cache(lambda team_id, n=20: TTL_TEAM_FORM)
 async def get_intl_team_all_matches(team_id: str, n: int = 20) -> list:
     """
     Fetch completed matches for a national team across ALL international competitions.
@@ -455,6 +484,7 @@ async def get_intl_team_all_matches(team_id: str, n: int = 20) -> list:
     return unique[:n]
 
 
+@espn_cache(lambda home_id, away_id, last=5, seasons_back=6: TTL_H2H)
 async def get_intl_head_to_head(home_id: str, away_id: str, last: int = 5,
                                  seasons_back: int = 6) -> list:
     """Find H2H results between two national teams across all international competitions.
@@ -531,6 +561,7 @@ async def get_intl_head_to_head(home_id: str, away_id: str, last: int = 5,
     return h2h[:last]
 
 
+@espn_cache(lambda home_id, away_id, league_slug, last=5: TTL_H2H)
 async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, last: int = 5) -> list:
     """
     Find H2H results across multiple seasons until we have `last` meetings.
@@ -583,31 +614,29 @@ async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, la
     return h2h[:last]
 
 
+@espn_cache(lambda league_slug, year, month: TTL_CALENDAR)
 async def get_espn_fixture_dates_for_month(league_slug: str, year: int, month: int) -> list:
     """
     Return a list of ISO date strings (YYYY-MM-DD) that have fixtures
     for the given league in a given month, using ESPN's scoreboard date-range query.
-    Returns [] (not an exception) on failure — leagues that merge multiple
-    slugs (see MULTI_SLUG_LEAGUES) shouldn't lose the calendar entirely
-    because one slug's request failed.
+
+    Raises on failure (see get_espn_soccer_fixtures for why, now that this
+    is cached) — callers fanning out over multiple slugs (MULTI_SLUG_LEAGUES)
+    are responsible for tolerating one slug's failure.
     """
     import calendar as _cal
     last_day = _cal.monthrange(year, month)[1]
     start = f"{year}{month:02d}01"
     end   = f"{year}{month:02d}{last_day:02d}"
 
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
-                params={"dates": f"{start}-{end}"},
-                timeout=20,
-            )
-            r.raise_for_status()
-            data = r.json()
-    except httpx.HTTPError as e:
-        print(f"[ESPN fixture-dates] {league_slug} {year}-{month}: {e}")
-        return []
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
+            params={"dates": f"{start}-{end}"},
+            timeout=20,
+        )
+        r.raise_for_status()
+        data = r.json()
 
     dates = set()
     for event in data.get("events", []):
@@ -757,6 +786,7 @@ async def _get_espn_nba_teams() -> dict:
     return _espn_nba_teams
 
 
+@espn_cache(lambda date_str=None: TTL_LIVE_DAY if is_today(date_str) else TTL_OTHER_DAY)
 async def get_espn_nba_scoreboard(date_str: Optional[str] = None) -> list:
     """Get NBA games from ESPN for a given date (ISO YYYY-MM-DD), or today if not provided."""
     params = {}
@@ -801,6 +831,7 @@ async def get_espn_nba_scoreboard(date_str: Optional[str] = None) -> list:
     return games
 
 
+@espn_cache(lambda year, month: TTL_CALENDAR)
 async def get_espn_nba_dates_for_month(year: int, month: int) -> list:
     """
     Return list of ISO date strings (YYYY-MM-DD) that have at least one NBA event
@@ -854,6 +885,7 @@ async def get_espn_nba_dates_for_month(year: int, month: int) -> list:
     return sorted(r for r in results if r is not None)
 
 
+@espn_cache(lambda team_id: TTL_TEAM_FORM)
 async def get_espn_nba_full_team_schedule(team_id: str) -> list:
     """Return all events for an NBA team (completed and upcoming) from ESPN."""
     try:
@@ -918,6 +950,7 @@ def _parse_nba_schedule_events(events: list, tid: str, playoff: bool = False) ->
     return matches
 
 
+@espn_cache(lambda team_id, n=10: TTL_TEAM_FORM)
 async def get_espn_nba_team_games(team_id: str, n: int = 10) -> list:
     """Fetch last N completed games for an NBA team from ESPN.
     Fetches regular season (seasontype=2) and playoffs (seasontype=3) in parallel
@@ -1052,6 +1085,7 @@ def _nba_api_fetch_team_games(team_name: str, n: int) -> list:
         return []
 
 
+@espn_cache(lambda team_id: TTL_H2H)
 async def get_espn_nba_team_stats(team_id: str) -> dict:
     """
     Fetch season-average stats for an NBA team from ESPN.
@@ -1084,6 +1118,7 @@ async def get_espn_nba_team_stats(team_id: str) -> dict:
         return {}
 
 
+@espn_cache(lambda espn_team_id, team_name, n=10: TTL_TEAM_FORM)
 async def get_nba_team_history(espn_team_id: str, team_name: str, n: int = 10) -> list:
     """
     Get team game history enriched with real shooting/rebounding stats.

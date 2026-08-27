@@ -34,6 +34,48 @@ app.add_middleware(
 )
 
 
+async def _cache_warm_loop():
+    """
+    Proactively refresh today's fixtures for every tracked league (+ NBA)
+    on a fixed interval, so a visitor's page load never has to wait on (or
+    risk a rate-limited) live ESPN fetch — they hit an already-warm cache
+    populated by this loop, not their own request.
+
+    Deliberately NOT on the 30s TTL_LIVE_DAY cadence — running that
+    aggressively 24/7 regardless of whether anyone's actually viewing would
+    itself become a large, constant source of ESPN traffic (the exact
+    problem this whole caching layer exists to avoid — see CLAUDE.md's
+    ESPN rate-limit notes). 5 minutes keeps a reasonable baseline "nobody
+    ever hits a cold cache" guarantee; a real visitor refreshing during a
+    live match still gets sub-30s freshness from the normal reactive cache
+    on top of this baseline.
+    """
+    from src.config import ESPN_FOOTBALL_LEAGUES, MULTI_SLUG_LEAGUES
+    from src.fetcher import get_espn_soccer_fixtures, get_espn_nba_scoreboard
+
+    WARM_INTERVAL = 300  # 5 minutes
+
+    # Every distinct ESPN slug actually used, deduped — several
+    # MULTI_SLUG_LEAGUES entries reuse a league's base slug plus extra ones.
+    slugs = set(ESPN_FOOTBALL_LEAGUES.values())
+    for slug_list in MULTI_SLUG_LEAGUES.values():
+        slugs.update(slug_list)
+
+    while True:
+        try:
+            results = await asyncio.gather(
+                *[get_espn_soccer_fixtures(s) for s in slugs],
+                get_espn_nba_scoreboard(),
+                return_exceptions=True,
+            )
+            failed = sum(1 for r in results if isinstance(r, Exception))
+            print(f"[CacheWarm] refreshed {len(slugs)} football slugs + NBA "
+                  f"scoreboard ({failed} failed, tolerated)")
+        except Exception as e:
+            print(f"[CacheWarm error] {e}")
+        await asyncio.sleep(WARM_INTERVAL)
+
+
 async def _auto_resolve_loop():
     """Resolve yesterday's predictions at 00:05 UTC, then retrain ML models."""
     from datetime import datetime, timezone, timedelta
@@ -62,6 +104,7 @@ async def _auto_resolve_loop():
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(_auto_resolve_loop())
+    asyncio.create_task(_cache_warm_loop())
     # Try to load existing models from disk on startup
     from src.models.ml_model import get_football_ml, get_basketball_ml
     get_football_ml()

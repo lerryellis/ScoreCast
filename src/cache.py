@@ -37,6 +37,7 @@ from datetime import date as _date
 
 _store: dict = {}      # key -> (expires_at_monotonic, value)
 _inflight: dict = {}   # key -> asyncio.Task, for request coalescing
+_seen: set = set()     # keys this process has fetched at least once — see cached()
 
 
 def is_today(target_date) -> bool:
@@ -49,11 +50,23 @@ def is_today(target_date) -> bool:
 
 async def cached(key: str, ttl: int, fetch):
     """
-    Return the cached value for `key` if still fresh (checking the
-    in-memory layer, then Supabase), otherwise call the zero-arg async
-    `fetch()` callable, persist its result, and return it. Concurrent
-    callers for the same key while a fetch is already running share that
-    one in-flight call instead of duplicating it.
+    Return the cached value for `key` if still fresh, otherwise call the
+    zero-arg async `fetch()` callable, persist its result, and return it.
+    Concurrent callers for the same key while a fetch is already running
+    share that one in-flight call instead of duplicating it.
+
+    Supabase (the persistent layer) is consulted ONLY the first time this
+    process sees a given key — not on every natural TTL expiry. This
+    matters: an in-memory entry and its Supabase copy are written at the
+    same moment with the same TTL, so once steady-state re-fetching kicks
+    in, Supabase's copy has ALWAYS already expired too by the time memory's
+    does — checking it is a guaranteed-useless network round trip. It's
+    only ever actually useful right after a restart, when memory is empty
+    but Supabase might still hold a value from before the restart. Verified
+    live this was the cause of a severe slowdown (Safe Bets, which fans out
+    to dozens of nested per-team/per-match fetches, went from ~7s to 36s+
+    once every one of those cache misses started paying a Supabase round
+    trip that could essentially never hit).
     """
     now = time.monotonic()
     entry = _store.get(key)
@@ -70,15 +83,17 @@ async def cached(key: str, ttl: int, fetch):
         # cache.py's module level would create a circular import.
         from src.database import get_espn_cache_entry, set_espn_cache_entry
 
-        db_hit = await get_espn_cache_entry(key)
-        if db_hit is not None:
-            value, remaining = db_hit
-            _store[key] = (time.monotonic() + remaining, value)
-            return value
+        if key not in _seen:
+            _seen.add(key)
+            db_hit = await get_espn_cache_entry(key)
+            if db_hit is not None:
+                value, remaining = db_hit
+                _store[key] = (time.monotonic() + remaining, value)
+                return value
 
         result = await fetch()
         _store[key] = (time.monotonic() + ttl, result)
-        await set_espn_cache_entry(key, result, ttl)
+        asyncio.create_task(set_espn_cache_entry(key, result, ttl))  # fire-and-forget
         return result
 
     task = asyncio.ensure_future(_resolve())

@@ -53,7 +53,9 @@ def _team_ratings_display(elo: dict) -> dict:
 
 async def predict_football_fixture(fixture: dict, standings: dict = None,
                                     home_bias: float = 1.0, away_bias: float = 1.0,
-                                    rho_factor: float = 1.0, **_) -> dict:
+                                    rho_factor: float = 1.0,
+                                    league_avg_goals: float = None,
+                                    home_adv_factor: float = 1.0, **_) -> dict:
     """Full prediction pipeline for one football fixture."""
     home_id     = fixture["home_team_id"]
     away_id     = fixture["away_team_id"]
@@ -93,6 +95,7 @@ async def predict_football_fixture(fixture: dict, standings: dict = None,
         home_rank=home_rank, away_rank=away_rank,
         home_all_matches=home_all, away_all_matches=away_all,
         home_elo=home_elo, away_elo=away_elo,
+        league_avg_goals=league_avg_goals, home_adv_factor=home_adv_factor,
     )
     # Apply goal bias calibration from historical prediction errors
     # This single multiplier captures all systematic over/under-prediction
@@ -211,10 +214,15 @@ async def get_all_football_predictions(league_name: str = "Premier League",
         bias = {}
 
     # Pick league-specific calibration if available, else global
-    league_bias = bias.get("leagues", {}).get(league_name) or bias.get("global", {})
-    home_bias   = league_bias.get("home", 1.0)
-    away_bias   = league_bias.get("away", 1.0)
-    rho_factor  = league_bias.get("rho_factor", 1.0)
+    league_bias      = bias.get("leagues", {}).get(league_name) or bias.get("global", {})
+    home_bias        = league_bias.get("home", 1.0)
+    away_bias        = league_bias.get("away", 1.0)
+    rho_factor       = league_bias.get("rho_factor", 1.0)
+    # This league's own learned scoring baseline + home-advantage correction
+    # (see features/football.py's build_football_features docstring) —
+    # None/1.0 fall back to the module-level defaults when not yet learned.
+    league_avg_goals = league_bias.get("avg_goals")
+    home_adv_factor  = league_bias.get("home_adv_factor", 1.0)
 
     # Fetch locked predictions for any live/final games — don't re-run the model
     from src.database import get_saved_predictions
@@ -287,6 +295,7 @@ async def get_all_football_predictions(league_name: str = "Premier League",
                 fixture, standings=standings,
                 home_bias=home_bias, away_bias=away_bias,
                 rho_factor=rho_factor,
+                league_avg_goals=league_avg_goals, home_adv_factor=home_adv_factor,
             )
             pred["is_women"] = fixture.get("league_slug", "") in WOMENS_SLUGS
 

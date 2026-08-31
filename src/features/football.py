@@ -21,7 +21,12 @@ from src.features.base import (
 from src.config import FOOTBALL_FORM_WINDOW, HOME_ADVANTAGE_FACTOR
 from src.models.elo import elo_to_attack_ratio, elo_to_defence_ratio, elo_blend_weight
 
-LEAGUE_AVG_GOALS = 1.35   # top European league average goals per team per game
+LEAGUE_AVG_GOALS = 1.35   # DEFAULT fallback only — real per-league values now come
+                          # from database.get_bias_factors()'s learned avg_goals (see
+                          # build_football_features's league_avg_goals param below).
+                          # Used here only as the fallback when a league has too few
+                          # resolved matches to trust its own average yet, or when a
+                          # form-average genuinely has no data at all (_weighted_avg).
 TOTAL_TEAMS      = 20     # default league size (PL, La Liga, etc.)
 
 # When a team's "form" comes from a weaker feeder league (see
@@ -159,7 +164,12 @@ def _weighted_avg(matches_all: list, key: str, w5: float = 0.5, w10: float = 0.5
     avg10  = float(np.mean(vals10)) if vals10 else None
     if avg5 is not None and avg10 is not None:
         return w5 * avg5 + w10 * avg10
-    return avg5 or avg10 or LEAGUE_AVG_GOALS
+    # None (not the global LEAGUE_AVG_GOALS constant) when there's no data at
+    # all — the caller's own "or league_avg_goals" fallback is the single
+    # source of truth for that, using THIS league's baseline, not a global
+    # one every league used to share. Returning a truthy default here would
+    # short-circuit that fallback via `or` before it ever gets a chance to.
+    return avg5 or avg10
 
 
 # ── Main feature builder ──────────────────────────────────────────────────────
@@ -178,13 +188,29 @@ def build_football_features(
     away_all_matches:  list = None,
     home_elo:          dict = None,
     away_elo:          dict = None,
+    league_avg_goals:  float = None,
+    home_adv_factor:   float = 1.0,
 ) -> dict:
     """
     Returns a feature dict consumed by the football prediction model.
     All match lists are sorted most-recent-first.
+
+    league_avg_goals: this league's own learned scoring baseline (from
+    database.get_bias_factors()'s avg_goals, shrunk toward the global
+    average on small samples — see _bias_sync), replacing the single
+    global LEAGUE_AVG_GOALS constant every league previously shared.
+    Falls back to LEAGUE_AVG_GOALS if not supplied (e.g. no calibration
+    data yet for this league/sport).
+
+    home_adv_factor: learned correction on top of config.HOME_ADVANTAGE_FACTOR
+    — the ratio of actual home-win rate to what the model already predicted
+    with its baseline home-advantage assumption (see database._calibrate_group).
+    1.0 = no correction needed. This was being computed by calibration but
+    never actually applied anywhere until now.
     """
     home_injuries = home_injuries or []
     away_injuries = away_injuries or []
+    league_avg_goals = league_avg_goals or LEAGUE_AVG_GOALS
 
     # ── 1. Venue-split form ───────────────────────────────────────────────
     MIN_VENUE = 3
@@ -200,16 +226,18 @@ def build_football_features(
     away_avg_scored   = _weighted_avg(a_src, "goals_for")
     away_avg_conceded = _weighted_avg(a_src, "goals_ag")
 
-    home_avg_scored   = home_avg_scored   or LEAGUE_AVG_GOALS
-    home_avg_conceded = home_avg_conceded or LEAGUE_AVG_GOALS
-    away_avg_scored   = away_avg_scored   or LEAGUE_AVG_GOALS
-    away_avg_conceded = away_avg_conceded or LEAGUE_AVG_GOALS
+    home_avg_scored   = home_avg_scored   or league_avg_goals
+    home_avg_conceded = home_avg_conceded or league_avg_goals
+    away_avg_scored   = away_avg_scored   or league_avg_goals
+    away_avg_conceded = away_avg_conceded or league_avg_goals
 
     # ── 2. Strength ratings ───────────────────────────────────────────────
-    home_attack  = home_avg_scored   / LEAGUE_AVG_GOALS
-    home_defence = home_avg_conceded / LEAGUE_AVG_GOALS
-    away_attack  = away_avg_scored   / LEAGUE_AVG_GOALS
-    away_defence = away_avg_conceded / LEAGUE_AVG_GOALS
+    # Divide by THIS league's own scoring baseline, not a single global
+    # constant every league used to share — see league_avg_goals docstring.
+    home_attack  = home_avg_scored   / league_avg_goals
+    home_defence = home_avg_conceded / league_avg_goals
+    away_attack  = away_avg_scored   / league_avg_goals
+    away_defence = away_avg_conceded / league_avg_goals
 
     # Discount ratings built from feeder-league form (newly-promoted teams) —
     # otherwise a side that dominated a weaker division looks just as strong
@@ -291,16 +319,20 @@ def build_football_features(
     away_h2h_venue   = h2h_avg_scores(h2h_at_venue, away_team_name)
 
     # ── 10. Expected goals (λ) ────────────────────────────────────────────
+    # HOME_ADVANTAGE_FACTOR (config default) * home_adv_factor (learned
+    # per-league correction, 1.0 = none needed) — same "default prior,
+    # corrected by what actually happened" pattern as home_bias/away_bias.
+    effective_home_advantage = HOME_ADVANTAGE_FACTOR * home_adv_factor
     lambda_home = (
-        home_attack * away_defence * LEAGUE_AVG_GOALS
-        * HOME_ADVANTAGE_FACTOR
+        home_attack * away_defence * league_avg_goals
+        * effective_home_advantage
         * home_rest * home_inj * home_momentum
         * home_congestion * home_motivation
         * home_rank_quality          # season-long quality signal
         * away_cs_factor
     )
     lambda_away = (
-        away_attack * home_defence * LEAGUE_AVG_GOALS
+        away_attack * home_defence * league_avg_goals
         * away_rest * away_inj * away_momentum
         * away_congestion * away_motivation
         * away_rank_quality          # season-long quality signal
@@ -334,6 +366,8 @@ def build_football_features(
         "home_defence_elo":     round(home_defence_elo, 1) if home_defence_elo is not None else None,
         "away_attack_elo":      round(away_attack_elo, 1)  if away_attack_elo  is not None else None,
         "away_defence_elo":     round(away_defence_elo, 1) if away_defence_elo is not None else None,
+        "league_avg_goals_used": round(league_avg_goals, 3),
+        "home_adv_factor_applied": round(home_adv_factor, 3),
         "home_ppg_last5":       round(home_ppg,       2),
         "away_ppg_last5":       round(away_ppg,       2),
         "home_momentum":        round(home_momentum,  3),

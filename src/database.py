@@ -749,6 +749,39 @@ def _calibrate_group(items: list) -> dict:
     }
 
 
+# How fast a per-league calibration's weight grows with sample size, when
+# shrinking it toward the global average (see _shrink_calibration). At
+# n=SHRINKAGE_K, a league is trusted 50/50 against the global figure; by
+# n=10*K it's ~91% trusted. Chosen so a handful of cup/international games
+# (n=7-23, verified live: several competitions were pegged hard at the
+# 0.60/1.75 clamp ceiling on samples that small) get pulled most of the way
+# back to the stable global average, while genuine leagues with 70-100+
+# resolved matches keep almost all of their own signal.
+SHRINKAGE_K = 30.0
+
+
+def _shrink_calibration(league_cal: dict, global_cal: dict, k: float = SHRINKAGE_K) -> dict:
+    """
+    Blend a per-league calibration result toward the global average,
+    weighted by how much data that league actually has. Without this, a
+    thin sample (a cup competition with 9 resolved games, say) swings all
+    the way to whatever the hard clamp allows — that's not a learned
+    correction, it's noise the clamp happens to cap. Applies to every
+    learned field, not just goal bias: avg_goals feeds the per-league
+    LEAGUE_AVG_GOALS replacement in features/football.py, so a wild
+    small-sample average there would distort the Poisson lambda directly.
+    """
+    n = league_cal["n"]
+    weight = n / (n + k)
+    shrunk = {
+        field: round(weight * league_cal[field] + (1 - weight) * global_cal[field], 4)
+        for field in ("home", "away", "home_adv_factor", "rho_factor", "avg_goals")
+    }
+    shrunk["n"] = n
+    shrunk["shrinkage_weight"] = round(weight, 3)
+    return shrunk
+
+
 def _bias_sync(sport: str = "football") -> dict:
     """
     Compute all model calibration factors from resolved predictions.
@@ -787,8 +820,10 @@ def _bias_sync(sport: str = "football") -> dict:
         lg = normalize_league_name((r.get("predictions") or {}).get("league") or "Unknown")
         by_league[lg].append(r)
 
-    leagues = {lg: _calibrate_group(items)
-               for lg, items in by_league.items() if len(items) >= 5}
+    leagues = {
+        lg: _shrink_calibration(_calibrate_group(items), global_cal)
+        for lg, items in by_league.items() if len(items) >= 5
+    }
 
     return {
         "global":  global_cal,

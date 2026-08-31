@@ -160,6 +160,23 @@ CUP_TO_LEAGUE = {
     "fra.coupe_de_france": "fra.1",
 }
 
+# Same idea as CUP_TO_LEAGUE, but keyed by the raw ESPN display name bias
+# calibration groups by (see database._bias_sync) rather than the slug —
+# domestic cups don't have an ESPN_DISPLAY_TO_LEAGUE entry (no 1:1 short
+# key makes sense for them), so normalize_league_name() passes their name
+# through unchanged, and that's the key _bias_sync's per-competition dict
+# uses. Verified live against actual resolved-match data (2026-08-31):
+# "German Cup", "English Carabao Cup", "English FA Cup", "Coppa Italia",
+# "Coupe de France" are the exact names ESPN returns.
+CUP_DISPLAY_TO_PARENT_LEAGUE = {
+    "English FA Cup":      "Premier League",
+    "English Carabao Cup": "Premier League",
+    "German Cup":          "Bundesliga",
+    "Copa del Rey":        "La Liga",
+    "Coppa Italia":        "Serie A",
+    "Coupe de France":     "Ligue 1",
+}
+
 # Cup competitions per country — used to fetch full schedule for rest/congestion
 ESPN_CUP_SLUGS = {
     "eng.1":  ["eng.fa", "eng.league_cup", "UEFA.CHAMPIONS", "UEFA.EUROPA"],

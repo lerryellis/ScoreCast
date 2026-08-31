@@ -774,21 +774,33 @@ def _calibrate_group(items: list) -> dict:
 SHRINKAGE_K = 30.0
 
 
-def _shrink_calibration(league_cal: dict, global_cal: dict, k: float = SHRINKAGE_K) -> dict:
+def _shrink_calibration(league_cal: dict, target_cal: dict, k: float = SHRINKAGE_K) -> dict:
     """
-    Blend a per-league calibration result toward the global average,
-    weighted by how much data that league actually has. Without this, a
-    thin sample (a cup competition with 9 resolved games, say) swings all
-    the way to whatever the hard clamp allows — that's not a learned
+    Blend a per-competition calibration result toward `target_cal`,
+    weighted by how much data that competition actually has. Without this,
+    a thin sample (a cup competition with 9 resolved games, say) swings
+    all the way to whatever the hard clamp allows — that's not a learned
     correction, it's noise the clamp happens to cap. Applies to every
     learned field, not just goal bias: avg_goals feeds the per-league
     LEAGUE_AVG_GOALS replacement in features/football.py, so a wild
     small-sample average there would distort the Poisson lambda directly.
+
+    `target_cal` is NOT always the cross-competition global — see
+    _bias_sync's use of CUP_DISPLAY_TO_PARENT_LEAGUE. A domestic cup
+    dominated by one country's clubs shrinking toward a global blended
+    across the Bundesliga's high-scoring games, Ligue 1's low-scoring
+    ones, international friendlies, etc. would pull it toward a number
+    that doesn't describe any real competition — its own domestic
+    top-flight league (already computed in the same run) is the far more
+    relevant reference. Every league genuinely without a more specific
+    peer (the top-flight leagues themselves, continental/international
+    competitions with no single "home country") still falls back to the
+    global figure, which remains the best available reference for those.
     """
     n = league_cal["n"]
     weight = n / (n + k)
     shrunk = {
-        field: round(weight * league_cal[field] + (1 - weight) * global_cal[field], 4)
+        field: round(weight * league_cal[field] + (1 - weight) * target_cal[field], 4)
         for field in ("home", "away", "home_adv_factor", "rho_factor", "avg_goals")
     }
     shrunk["n"] = n
@@ -834,10 +846,23 @@ def _bias_sync(sport: str = "football") -> dict:
         lg = normalize_league_name((r.get("predictions") or {}).get("league") or "Unknown")
         by_league[lg].append(r)
 
-    leagues = {
-        lg: _shrink_calibration(_calibrate_group(items), global_cal)
+    # Raw (unshrunk) calibration for every competition with enough samples,
+    # computed first so cup competitions can shrink toward their own
+    # domestic league's RAW figures below (using the parent's already-
+    # shrunk figures would double-shrink; using raw is fine since the
+    # parent leagues have large enough samples — n=74-127 seen live — that
+    # their raw and shrunk values are already close together).
+    raw_cals = {
+        lg: _calibrate_group(items)
         for lg, items in by_league.items() if len(items) >= 5
     }
+
+    from src.config import CUP_DISPLAY_TO_PARENT_LEAGUE
+    leagues = {}
+    for lg, raw in raw_cals.items():
+        parent = CUP_DISPLAY_TO_PARENT_LEAGUE.get(lg)
+        target = raw_cals.get(parent) if parent else None
+        leagues[lg] = _shrink_calibration(raw, target or global_cal)
 
     return {
         "global":  global_cal,

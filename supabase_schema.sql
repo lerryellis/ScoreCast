@@ -20,8 +20,39 @@ CREATE TABLE IF NOT EXISTS predictions (
   loss_prob     FLOAT,
   confidence    FLOAT,
   match_date    DATE        NOT NULL,
-  created_at    TIMESTAMPTZ DEFAULT NOW()
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  -- Raw match-context features (not just the Poisson model's own outputs) —
+  -- lets the XGBoost correction layer learn genuine team/matchup corrections
+  -- instead of only "the base model is biased when its own numbers look
+  -- like X". NULL on any row saved before this was added (locked at first
+  -- save, by design) — models/ml_model.py substitutes neutral defaults for
+  -- those, same pattern as every other locked-history gap this app has.
+  home_attack       FLOAT,
+  home_defence      FLOAT,
+  away_attack       FLOAT,
+  away_defence      FLOAT,
+  home_rank         INTEGER,
+  away_rank         INTEGER,
+  home_rest_factor  FLOAT,
+  away_rest_factor  FLOAT,
+  h2h_matches       INTEGER,
+  home_tier_gap     FLOAT,
+  away_tier_gap     FLOAT
 );
+
+-- Existing deployments: CREATE TABLE IF NOT EXISTS above won't add columns
+-- to a table that already exists.
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS home_attack FLOAT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS home_defence FLOAT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS away_attack FLOAT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS away_defence FLOAT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS home_rank INTEGER;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS away_rank INTEGER;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS home_rest_factor FLOAT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS away_rest_factor FLOAT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS h2h_matches INTEGER;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS home_tier_gap FLOAT;
+ALTER TABLE predictions ADD COLUMN IF NOT EXISTS away_tier_gap FLOAT;
 
 -- Prevent duplicate saves for the same fixture on the same day
 CREATE UNIQUE INDEX IF NOT EXISTS predictions_fixture_date_uidx

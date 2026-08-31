@@ -37,6 +37,15 @@ TOTAL_TEAMS      = 20     # default league size (PL, La Liga, etc.)
 # ones, and concedes more than its second-tier record suggests. Discount
 # attack / inflate defence-conceded per tier of gap rather than trusting the
 # feeder-league numbers at face value.
+#
+# Still hand-picked, not backtested — checked whether it could be (like
+# K_FACTOR was, see elo.backtest_k_factor): it can't, yet. home_tier_gap/
+# away_tier_gap (the actual per-match discount inputs) are computed at
+# prediction time but never persisted to the predictions table, so there's
+# no historical record of which resolved matches even involved a
+# cross-tier discount to replay against. Persisting them (see the XGBoost
+# feature-set expansion in models/ml_model.py) would make this backtestable
+# the same way K_FACTOR now is, once enough new data accumulates.
 CROSS_TIER_ATTACK_DISCOUNT   = 0.85   # per tier gap
 CROSS_TIER_DEFENCE_INFLATION = 1.15   # per tier gap
 

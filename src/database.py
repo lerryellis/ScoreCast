@@ -61,6 +61,20 @@ def _save_prediction_sync(pred: dict) -> None:
         "predicted_away_ht": p.get("predicted_away_ht"),
         "lambda_home":       f.get("lambda_home"),
         "lambda_away":       f.get("lambda_away"),
+        # Raw match-context features, for the XGBoost correction layer to
+        # eventually learn genuine team/matchup corrections from — see
+        # models/ml_model.py's FOOTBALL_FEATURES.
+        "home_attack":       f.get("home_attack"),
+        "home_defence":      f.get("home_defence"),
+        "away_attack":       f.get("away_attack"),
+        "away_defence":      f.get("away_defence"),
+        "home_rank":         f.get("home_rank"),
+        "away_rank":         f.get("away_rank"),
+        "home_rest_factor":  f.get("home_rest_factor"),
+        "away_rest_factor":  f.get("away_rest_factor"),
+        "h2h_matches":       f.get("h2h_matches"),
+        "home_tier_gap":     f.get("home_tier_gap"),
+        "away_tier_gap":     f.get("away_tier_gap"),
         "win_prob":          p.get("win_probability"),
         "draw_prob":         p.get("draw_probability"),
         "loss_prob":         p.get("loss_probability"),

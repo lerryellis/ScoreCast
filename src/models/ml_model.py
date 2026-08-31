@@ -23,6 +23,16 @@ FOOTBALL_MODEL_PATH   = MODEL_DIR / "football_ml_latest.pkl"
 BASKETBALL_MODEL_PATH = MODEL_DIR / "basketball_ml_latest.pkl"
 
 # Features pulled from DB for training — must match what's available at inference time
+#
+# The first block (lambda_home..league_enc) is entirely derived from the
+# Poisson model's OWN output — meaning this layer could previously only
+# learn "the base model is biased in this direction when its own numbers
+# look like X," never anything about the actual matchup. The second block
+# (home_attack..away_tier_gap) is raw match-context signal, added so it can
+# learn genuine team/situation-specific corrections instead. NULL on any
+# row saved before these columns existed (locked at first save) — see
+# build_feature_vector's defaults for those; this only starts helping once
+# enough NEW resolved matches with these columns populated accumulate.
 FOOTBALL_FEATURES = [
     "lambda_home", "lambda_away",
     "win_prob", "draw_prob", "loss_prob",
@@ -30,6 +40,11 @@ FOOTBALL_FEATURES = [
     "predicted_home", "predicted_away",
     "over_0_5", "over_1_5", "over_2_5", "over_3_5",
     "league_enc",
+    "home_attack", "home_defence", "away_attack", "away_defence",
+    "home_rank", "away_rank",
+    "home_rest_factor", "away_rest_factor",
+    "h2h_matches",
+    "home_tier_gap", "away_tier_gap",
 ]
 
 BASKETBALL_FEATURES = [
@@ -106,6 +121,20 @@ class SportsMLModel:
                     float(p.get("over_2_5")        or 50.0),
                     float(p.get("over_3_5")        or 25.0),
                     float(self._enc(p.get("league", ""))),
+                    # Raw match-context — NULL on rows saved before these
+                    # columns existed, so default to neutral (1.0 = league
+                    # average attack/defence, rank/tier-gap/h2h unknown=0).
+                    float(p.get("home_attack")      if p.get("home_attack")      is not None else 1.0),
+                    float(p.get("home_defence")     if p.get("home_defence")     is not None else 1.0),
+                    float(p.get("away_attack")       if p.get("away_attack")      is not None else 1.0),
+                    float(p.get("away_defence")      if p.get("away_defence")     is not None else 1.0),
+                    float(p.get("home_rank")         or 0),
+                    float(p.get("away_rank")         or 0),
+                    float(p.get("home_rest_factor")  if p.get("home_rest_factor") is not None else 1.0),
+                    float(p.get("away_rest_factor")  if p.get("away_rest_factor") is not None else 1.0),
+                    float(p.get("h2h_matches")       or 0),
+                    float(p.get("home_tier_gap")     or 0.0),
+                    float(p.get("away_tier_gap")     or 0.0),
                 ]
             else:  # basketball
                 return [
@@ -210,8 +239,19 @@ class SportsMLModel:
         if vec is None:
             return None
         X = np.array([vec], dtype=np.float32)
-        lh = float(self.home_model.predict(X)[0])
-        la = float(self.away_model.predict(X)[0])
+        try:
+            lh = float(self.home_model.predict(X)[0])
+            la = float(self.away_model.predict(X)[0])
+        except Exception as e:
+            # A persisted model trained on an older FOOTBALL_FEATURES/
+            # BASKETBALL_FEATURES shape (e.g. right after adding new
+            # features — see build_feature_vector) will shape-mismatch
+            # against the current vector until it's retrained. Treat that
+            # exactly like "ML correction unavailable" — fall back to the
+            # un-corrected Poisson/base prediction — rather than crashing
+            # the whole fixture's prediction over a stale model file.
+            print(f"[ML predict error, falling back to base prediction] {e}")
+            return None
 
         # Sport-specific sanity clamps — Poisson log-link can extrapolate to
         # extreme values when inputs are outside the training distribution.

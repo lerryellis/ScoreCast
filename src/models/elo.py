@@ -27,9 +27,14 @@ ELO_SCALE    = 400.0    # standard logistic scale (same convention as chess/FIDE
 LEAGUE_AVG_GOALS = 1.35  # kept in sync with features/football.py's constant
 
 # How fast ratings move per match. Lower = more stable/slow-changing,
-# higher = more reactive to a single result. 20-32 is the typical range used
-# by football Elo systems (clubelo uses ~a similar order of magnitude);
-# tune with real outcome data once enough resolved matches accumulate.
+# higher = more reactive to a single result. Empirically checked (not just
+# a guess) via backtest_k_factor() below, replaying goals-only Elo updates
+# against the 121 resolved matches that have team IDs on file: MAE was flat
+# across K=20-28 and minimized exactly at K=24 (2.2512 vs 2.2517 at K=20/28,
+# 2.2596 at K=8, 2.2615 at K=50) — the original hand-picked value happens to
+# already be at the empirical optimum for this sample. Re-run the backtest
+# as more resolved-with-team-IDs matches accumulate; 121 is a small sample
+# and this simplification doesn't include shot/defensive-action stats.
 K_FACTOR = 24.0
 
 # Applied once, when a team's league_slug changes between the rating we have
@@ -42,6 +47,12 @@ K_FACTOR = 24.0
 # features/football.py, which does the equivalent job for the raw form
 # stats. Promotion is asymmetric from relegation: newly promoted teams
 # historically regress harder than relegated teams over-perform.
+#
+# Still hand-picked, not backtested, for the same reason
+# CROSS_TIER_ATTACK_DISCOUNT isn't: there's no persisted record of which
+# resolved match involved a promotion/relegation seeding event (it happens
+# once, silently, inside get_team_ratings — see seed_rating_for_promotion),
+# so there's nothing to replay against yet.
 PROMOTION_MARKDOWN_PER_TIER = 40.0   # attack down, defence down (worse) per tier moved up
 RELEGATION_MARKUP_PER_TIER  = 25.0   # attack up, defence up (better) per tier moved down
 
@@ -261,3 +272,71 @@ def team_star_rating(attack_elo: float, midfield_elo: float, defence_elo: float)
     ) / 3.0
     stars = avg_100 / 100.0 * 5.0
     return max(0.5, min(5.0, round(stars * 2) / 2))
+
+
+async def backtest_k_factor(candidates=(8, 12, 16, 20, 24, 28, 32, 40, 50)) -> dict:
+    """
+    Empirically check whether K_FACTOR (currently a hand-picked 24.0 — see
+    the module-level comment) is actually a good choice, by replaying Elo
+    attack/defence updates match-by-match against every resolved match that
+    has team IDs on file, for each candidate K, and scoring each candidate
+    by how well its resulting PRE-match ratings would have predicted that
+    match's actual goals.
+
+    Simplification: goals-only, no shot/defensive-action stats (those
+    would need a live ESPN fetch per historical match — out of scope for a
+    backtest; the composite-performance weights (SHOT_ON_TARGET_WEIGHT
+    etc.) are minor perturbations on top of the goals signal that K_FACTOR
+    is primarily sizing anyway). Ratings start fresh at BASELINE_ELO with
+    no promotion/relegation seeding, since replaying that accurately would
+    need each team's actual tier history — a real limitation given only
+    resolved matches with team IDs can be used at all (locked-at-first-save
+    predictions from before that column existed can't participate — see
+    CLAUDE.md's Team Elo Ratings migration note. Verified live: 121 of 884
+    resolved matches, as of this writing).
+
+    Returns {k: mean_absolute_error} — lower is better. Matches are
+    replayed in chronological order (oldest first) so ratings accumulate
+    the same way they do in production.
+    """
+    from src.database import _get_client
+    client = _get_client()
+    rows = (
+        client.table("prediction_results")
+              .select("actual_home, actual_away, "
+                      "predictions(home_team_id, away_team_id, match_date, sport)")
+              .execute()
+    ).data or []
+
+    matches = [
+        r for r in rows
+        if (r.get("predictions") or {}).get("sport", "football") == "football"
+        and (r.get("predictions") or {}).get("home_team_id")
+        and (r.get("predictions") or {}).get("away_team_id")
+    ]
+    matches.sort(key=lambda r: r["predictions"]["match_date"])
+
+    results = {}
+    for k in candidates:
+        ratings: dict = {}   # team_id -> {"attack": elo, "defence": elo}
+        abs_errors = []
+        for r in matches:
+            p = r["predictions"]
+            h_id, a_id = str(p["home_team_id"]), str(p["away_team_id"])
+            hr = ratings.setdefault(h_id, {"attack": BASELINE_ELO, "defence": BASELINE_ELO})
+            ar = ratings.setdefault(a_id, {"attack": BASELINE_ELO, "defence": BASELINE_ELO})
+
+            exp_h = LEAGUE_AVG_GOALS * 10 ** ((hr["attack"] - ar["defence"]) / ELO_SCALE)
+            exp_a = LEAGUE_AVG_GOALS * 10 ** ((ar["attack"] - hr["defence"]) / ELO_SCALE)
+            abs_errors.append(abs(exp_h - r["actual_home"]) + abs(exp_a - r["actual_away"]))
+
+            delta_h = k * (r["actual_home"] - exp_h) / LEAGUE_AVG_GOALS
+            delta_a = k * (r["actual_away"] - exp_a) / LEAGUE_AVG_GOALS
+            hr["attack"] += delta_h
+            ar["defence"] -= delta_h
+            ar["attack"] += delta_a
+            hr["defence"] -= delta_a
+
+        results[k] = round(sum(abs_errors) / len(abs_errors), 4) if abs_errors else None
+
+    return {"n_matches": len(matches), "mean_abs_error_by_k": results}

@@ -51,6 +51,25 @@ def _team_ratings_display(elo: dict) -> dict:
     }
 
 
+def _format_ai_tip(tip_row: dict) -> dict:
+    """
+    Shape one src/database.get_ai_tips() row (raw DB columns) into the
+    compact dict index.html's "AI Prediction" section expects. Callers
+    should only pass rows that exist — get_ai_tips() already filters to
+    status == "done", so tip_row is never a "skipped_no_key"/"failed" row.
+    """
+    return {
+        "predicted_home":   tip_row.get("ai_predicted_home"),
+        "predicted_away":   tip_row.get("ai_predicted_away"),
+        "safe_bet_line":    tip_row.get("ai_safe_bet_line"),
+        "safe_bet_pick":    tip_row.get("ai_safe_bet_pick"),
+        "agrees_with_model": tip_row.get("agrees_with_model"),
+        "confidence":       tip_row.get("confidence"),
+        "reasoning":        tip_row.get("reasoning"),
+        "sources":          tip_row.get("sources") or [],
+    }
+
+
 async def predict_football_fixture(fixture: dict, standings: dict = None,
                                     home_bias: float = 1.0, away_bias: float = 1.0,
                                     rho_factor: float = 1.0,
@@ -225,9 +244,13 @@ async def get_all_football_predictions(league_name: str = "Premier League",
     home_adv_factor  = league_bias.get("home_adv_factor", 1.0)
 
     # Fetch locked predictions for any live/final games — don't re-run the model
-    from src.database import get_saved_predictions
+    from src.database import get_saved_predictions, get_ai_tips
     live_final_ids = [f["fixture_id"] for f in fixtures if f.get("is_live") or f.get("is_final")]
     saved_preds = await get_saved_predictions(live_final_ids, date_str) if live_final_ids else {}
+    # AI tips (see src/ai_tipster.py) aren't locked/unlocked by match status —
+    # generated once pre-kickoff, valid for the fixture's whole lifetime — so
+    # fetched once here for every fixture regardless of live/final state.
+    ai_tips = await get_ai_tips([f["fixture_id"] for f in fixtures], date_str)
 
     results = []
     for fixture in fixtures:
@@ -288,6 +311,8 @@ async def get_all_football_predictions(league_name: str = "Premier League",
                     "prediction_locked": True,
                 }
                 pred["is_women"] = fixture.get("league_slug", "") in WOMENS_SLUGS
+                tip_row = ai_tips.get(str(fixture["fixture_id"]))
+                pred["ai_prediction"] = _format_ai_tip(tip_row) if tip_row else None
                 results.append(pred)
                 continue
 
@@ -298,6 +323,8 @@ async def get_all_football_predictions(league_name: str = "Premier League",
                 league_avg_goals=league_avg_goals, home_adv_factor=home_adv_factor,
             )
             pred["is_women"] = fixture.get("league_slug", "") in WOMENS_SLUGS
+            tip_row = ai_tips.get(str(fixture["fixture_id"]))
+            pred["ai_prediction"] = _format_ai_tip(tip_row) if tip_row else None
 
             # Enrich with HT scores from football-data.org (better source than ESPN)
             fd = match_ht_to_fixture(fd_matches, fixture["home_team"], fixture["away_team"])
@@ -320,8 +347,9 @@ async def get_all_football_predictions(league_name: str = "Premier League",
     # Save predictions to Supabase (fire-and-forget)
     if results:
         try:
-            from src.database import save_predictions
+            from src.database import save_predictions, maybe_generate_ai_tips
             asyncio.create_task(save_predictions(results))
+            asyncio.create_task(maybe_generate_ai_tips(results))
         except Exception:
             pass
 
@@ -539,7 +567,7 @@ async def get_all_international_predictions(league_name: str = "World Cup 2026",
                                              target_date: str = None) -> list:
     """Fetch fixtures for an international competition and predict all."""
     from datetime import date as _date
-    from src.database import get_bias_factors
+    from src.database import get_bias_factors, get_ai_tips
 
     league_slug = ESPN_INTERNATIONAL_LEAGUES.get(league_name)
     if not league_slug:
@@ -559,6 +587,9 @@ async def get_all_international_predictions(league_name: str = "World Cup 2026",
     # the real qualified teams are known — they have no history to predict on.
     fixtures = [f for f in fixtures if _fixture_has_real_teams(f)]
 
+    date_str = target_date or _date.today().isoformat()
+    ai_tips = await get_ai_tips([f["fixture_id"] for f in fixtures], date_str)
+
     results = []
     for fixture in fixtures:
         try:
@@ -566,6 +597,8 @@ async def get_all_international_predictions(league_name: str = "World Cup 2026",
                 fixture, home_bias=home_bias, away_bias=away_bias,
                 rho_factor=rho_factor,
             )
+            tip_row = ai_tips.get(str(fixture["fixture_id"]))
+            pred["ai_prediction"] = _format_ai_tip(tip_row) if tip_row else None
             results.append(pred)
         except Exception as e:
             print(f"[Intl prediction error] {fixture.get('home_team')} vs "
@@ -573,8 +606,9 @@ async def get_all_international_predictions(league_name: str = "World Cup 2026",
 
     if results:
         try:
-            from src.database import save_predictions
+            from src.database import save_predictions, maybe_generate_ai_tips
             asyncio.create_task(save_predictions(results))
+            asyncio.create_task(maybe_generate_ai_tips(results))
         except Exception:
             pass
 
@@ -701,9 +735,13 @@ async def get_all_basketball_predictions(target_date: str = None) -> list:
     match_date = target_date or _date.today().isoformat()
 
     # Fetch locked predictions for live/final games
-    from src.database import get_saved_predictions
+    from src.database import get_saved_predictions, get_ai_tips
     live_final_game_ids = [g["game_id"] for g in games if g.get("is_live") or g.get("is_final")]
     saved_preds = await get_saved_predictions(live_final_game_ids, match_date) if live_final_game_ids else {}
+    # AI tips aren't locked/unlocked by game status — generated once
+    # pre-tipoff, valid for the game's whole lifetime (see the football
+    # branch above for the same reasoning).
+    ai_tips = await get_ai_tips([g["game_id"] for g in games], match_date)
 
     async def _safe_predict(game):
         # Game has started — return locked pre-kickoff prediction
@@ -748,11 +786,14 @@ async def get_all_basketball_predictions(target_date: str = None) -> list:
 
     for p in results:
         p["match_date"] = match_date[:10]
+        tip_row = ai_tips.get(str(p["game_id"]))
+        p["ai_prediction"] = _format_ai_tip(tip_row) if tip_row else None
 
     if results:
         try:
-            from src.database import save_basketball_predictions
+            from src.database import save_basketball_predictions, maybe_generate_ai_tips
             asyncio.create_task(save_basketball_predictions(results))
+            asyncio.create_task(maybe_generate_ai_tips(results))
         except Exception:
             pass
 

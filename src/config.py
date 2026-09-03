@@ -10,6 +10,12 @@ SUPABASE_KEY        = os.getenv("SUPABASE_KEY", "")
 THESPORTSDB_KEY     = os.getenv("THESPORTSDB_KEY", "123")   # free public key
 ADMIN_KEY           = os.getenv("ADMIN_KEY", "betscore-admin")
 PORT                = int(os.getenv("PORT", 8000))
+ANTHROPIC_API_KEY   = os.getenv("ANTHROPIC_API_KEY", "")   # AI Tipster — see src/ai_tipster.py.
+                                                            # Empty by default: the feature stays
+                                                            # completely inert (no calls, no cost)
+                                                            # until a real key is set, same pattern
+                                                            # as every other optional integration
+                                                            # in this app.
 
 # football-data.org competition codes for leagues we support
 FOOTBALL_DATA_COMPETITIONS = {

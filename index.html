@@ -882,6 +882,81 @@
     float: right;
   }
 
+  /* AI Prediction section (src/ai_tipster.py) — deliberately styled with a
+     distinct purple accent, separate from the model's own blue/green/pink
+     accents, so it visually reads as "a second opinion" rather than part
+     of the statistical model's own output. */
+  .ai-tip-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; vertical-align: middle; margin-left: 2px;
+  }
+  .ai-prediction-section {
+    border: 1px solid rgba(167,139,250,0.25);
+    background: rgba(167,139,250,0.05);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .ai-prediction-section .modal-section-title { color: #a78bfa; }
+  .ai-pred-row {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .ai-pred-score-box {
+    font-size: 20px; font-weight: 800; color: #a78bfa;
+    background: rgba(167,139,250,0.1);
+    border: 1px solid rgba(167,139,250,0.25);
+    border-radius: 8px;
+    padding: 4px 12px;
+    line-height: 1.1;
+  }
+  .ai-pred-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .ai-agree-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700;
+  }
+  .ai-agree-badge.agree {
+    background: rgba(0,230,118,0.1); color: var(--green);
+    border: 1px solid rgba(0,230,118,0.2);
+  }
+  .ai-agree-badge.disagree {
+    background: rgba(255,215,64,0.1); color: var(--yellow);
+    border: 1px solid rgba(255,215,64,0.2);
+  }
+  .ai-confidence-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700;
+    background: rgba(167,139,250,0.1); color: #a78bfa;
+    border: 1px solid rgba(167,139,250,0.2);
+  }
+  .ai-safe-bet {
+    margin-top: 8px; font-size: 12px; color: var(--subtext);
+  }
+  .ai-safe-bet strong { color: #a78bfa; }
+  .ai-reasoning {
+    margin-top: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .ai-sources {
+    margin-top: 8px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .ai-source-link {
+    font-size: 10px;
+    color: var(--subtext);
+    text-decoration: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ai-source-link:hover { color: #a78bfa; border-color: rgba(167,139,250,0.3); }
+
   /* ── Team Schedule View ── */
   .team-schedule-wrap { margin-top: 0; }
   .team-schedule-wrap h2 {
@@ -2072,7 +2147,7 @@
       return `
         <div class="match-card" style="animation-delay:${delay}s;cursor:pointer" onclick="openMatchModal('${m.fixture_id}')">
           <div class="card-header">
-            <span class="league-name">⚽ ${m.league}${m.is_women ? ' <span class="women-badge" title="Women\'s competition">W</span>' : ''}</span>
+            <span class="league-name">⚽ ${m.league}${m.is_women ? ' <span class="women-badge" title="Women\'s competition">W</span>' : ''}${m.ai_prediction ? ' <span class="ai-tip-badge" title="AI Prediction available">🤖</span>' : ''}</span>
             <span class="match-time">${formatTime(m.match_time)}</span>
           </div>
           <div class="card-body">
@@ -2258,7 +2333,7 @@
       return `
         <div class="match-card" style="animation-delay:${delay}s;cursor:pointer" onclick="openMatchModal('${m.game_id}')">
           <div class="card-header">
-            <span class="league-name">🏀 NBA</span>
+            <span class="league-name">🏀 NBA${m.ai_prediction ? ' <span class="ai-tip-badge" title="AI Prediction available">🤖</span>' : ''}</span>
             <span class="match-time">${m.status || 'Today'}</span>
           </div>
           <div class="card-body">
@@ -2705,6 +2780,11 @@
         </div>`;
     }
 
+    // ── AI Prediction (src/ai_tipster.py) — independent LLM verdict shown
+    // alongside, never replacing, the statistical model above. Absent
+    // entirely (no key configured yet, or still generating) → no section.
+    const aiSection = buildAiPredictionSection(m.ai_prediction, sport);
+
     return `
       <button class="modal-close" onclick="closeMatchModal()" title="Close">✕</button>
       ${leagueRow}
@@ -2713,8 +2793,39 @@
       ${bar}
       ${statsHtml}
       ${scorelineSection}
+      ${aiSection}
       ${formH2H}
     `;
+  }
+
+  // ── AI Prediction section ─────────────────────────────────────────────────
+  function buildAiPredictionSection(ai, sport) {
+    if (!ai) return '';
+    const agreeBadge = ai.agrees_with_model
+      ? `<span class="ai-agree-badge agree">🤝 Agrees with model</span>`
+      : `<span class="ai-agree-badge disagree">⚡ Disagrees with model</span>`;
+    const sbLine = ai.safe_bet_line
+      ? `<div class="ai-safe-bet">AI safe bet: <strong>${ai.safe_bet_pick || 'over'} ${ai.safe_bet_line}</strong></div>`
+      : '';
+    const sources = (ai.sources || []).slice(0, 3);
+    const sourcesHtml = sources.length ? `
+      <div class="ai-sources">
+        ${sources.map(s => `<a href="${s.url}" target="_blank" rel="noopener" class="ai-source-link">${s.title || 'source'}</a>`).join('')}
+      </div>` : '';
+    return `
+      <div class="modal-body-section ai-prediction-section">
+        <div class="modal-section-title">🤖 AI Prediction</div>
+        <div class="ai-pred-row">
+          <div class="ai-pred-score-box ${sport}">${ai.predicted_home ?? '—'} – ${ai.predicted_away ?? '—'}</div>
+          <div class="ai-pred-meta">
+            ${agreeBadge}
+            ${ai.confidence != null ? `<span class="ai-confidence-badge">🎯 ${ai.confidence}% confidence</span>` : ''}
+          </div>
+        </div>
+        ${sbLine}
+        ${ai.reasoning ? `<div class="ai-reasoning">${ai.reasoning}</div>` : ''}
+        ${sourcesHtml}
+      </div>`;
   }
 
   // ── Accuracy Scorecard ────────────────────────────────────────────────────

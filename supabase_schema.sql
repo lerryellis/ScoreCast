@@ -115,3 +115,31 @@ CREATE TABLE IF NOT EXISTS espn_cache (
 
 -- Fast lookup for cleanup/expiry checks
 CREATE INDEX IF NOT EXISTS espn_cache_expires_idx ON espn_cache (expires_at);
+
+-- AI Tipster — src/ai_tipster.py. Generated ONCE per fixture (fire-and-forget,
+-- right after the prediction itself is first saved) and cached here, same
+-- "locked at first save" shape as `predictions` — never regenerated for a
+-- fixture that already has a row, regardless of how many times the page
+-- sweeping that league re-runs before kickoff. Keeps this to one paid LLM
+-- call per real match, not one per page view.
+CREATE TABLE IF NOT EXISTS ai_tips (
+  id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  fixture_id          TEXT NOT NULL,
+  sport               TEXT NOT NULL DEFAULT 'football',
+  match_date          DATE NOT NULL,
+  model_predicted_home INTEGER,
+  model_predicted_away INTEGER,
+  ai_predicted_home   INTEGER,
+  ai_predicted_away   INTEGER,
+  ai_safe_bet_line    TEXT,        -- e.g. "2.5" or "under_0.5", mirrors predictions.safe_bet_line
+  ai_safe_bet_pick    TEXT,        -- "over" or "under"
+  agrees_with_model   BOOLEAN,     -- does the AI's own score pick match the model's outcome (H/D/A)?
+  confidence          INTEGER,     -- 0-100, the AI's own stated confidence
+  reasoning           TEXT,        -- short natural-language summary shown on the card
+  sources             JSONB,       -- URLs/titles the web-search tool actually cited, if any
+  status              TEXT NOT NULL DEFAULT 'pending',  -- pending | done | failed | skipped_no_key
+  created_at          TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ai_tips_fixture_date_uidx
+  ON ai_tips (fixture_id, match_date);

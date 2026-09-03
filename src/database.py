@@ -146,6 +146,120 @@ async def save_predictions(preds: list) -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
+# ── AI Tipster (src/ai_tipster.py) ──────────────────────────────────────────────
+#
+# Generated ONCE per fixture, fire-and-forget, same "locked at first save"
+# shape as predictions themselves — _ai_tip_exists_sync is checked before
+# ever calling the (metered, real-cost) LLM, so a fixture that already has
+# a row never regenerates one no matter how many times the page sweeping
+# that league re-runs before kickoff.
+
+def _ai_tip_exists_sync(fixture_id: str, match_date: str) -> bool:
+    client = _get_client()
+    try:
+        rows = (
+            client.table("ai_tips")
+                  .select("id")
+                  .eq("fixture_id", str(fixture_id))
+                  .eq("match_date", match_date)
+                  .limit(1)
+                  .execute()
+        ).data
+        return bool(rows)
+    except Exception:
+        return False   # table not created yet — run supabase_schema.sql; treat as "not generated"
+
+
+def _save_ai_tip_sync(fixture_id: str, sport: str, match_date: str,
+                       model_home, model_away, tip: dict) -> None:
+    client = _get_client()
+    record = {
+        "fixture_id":           str(fixture_id),
+        "sport":                sport,
+        "match_date":           match_date,
+        "model_predicted_home": model_home,
+        "model_predicted_away": model_away,
+        "status":               tip.get("status", "failed"),
+        "ai_predicted_home":    tip.get("ai_predicted_home"),
+        "ai_predicted_away":    tip.get("ai_predicted_away"),
+        "ai_safe_bet_line":     tip.get("ai_safe_bet_line"),
+        "ai_safe_bet_pick":     tip.get("ai_safe_bet_pick"),
+        "agrees_with_model":    tip.get("agrees_with_model"),
+        "confidence":           tip.get("confidence"),
+        "reasoning":            tip.get("reasoning"),
+        "sources":              tip.get("sources"),
+    }
+    try:
+        client.table("ai_tips").upsert(record, on_conflict="fixture_id,match_date",
+                                        ignore_duplicates=True).execute()
+    except Exception as e:
+        print(f"[AI Tipster save error] {e}")
+
+
+async def maybe_generate_ai_tip(pred: dict) -> None:
+    """
+    Fire-and-forget: generate + save an AI tip for one prediction, but only
+    if this fixture doesn't already have one. Call sites should not await
+    this in the request path — wrap in asyncio.create_task, same as
+    save_prediction. No-ops entirely (no DB check, no LLM call) if
+    ANTHROPIC_API_KEY isn't configured — see ai_tipster.generate_ai_tip.
+    """
+    from src.config import ANTHROPIC_API_KEY
+    if not ANTHROPIC_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    # Basketball predictions use "game_id" (not "fixture_id") and set
+    # "match_date" directly rather than deriving it from "match_time".
+    fixture_id = pred.get("fixture_id") or pred.get("game_id")
+    match_date = pred.get("match_date") or (pred.get("match_time") or "")[:10]
+    if not fixture_id or not match_date:
+        return
+
+    already = await asyncio.to_thread(_ai_tip_exists_sync, fixture_id, match_date)
+    if already:
+        return
+
+    from src.ai_tipster import generate_ai_tip
+    tip = await generate_ai_tip(pred)
+    p = pred.get("prediction") or {}
+    await asyncio.to_thread(
+        _save_ai_tip_sync, fixture_id, pred.get("sport", "football"), match_date,
+        p.get("predicted_home"), p.get("predicted_away"), tip,
+    )
+
+
+async def maybe_generate_ai_tips(preds: list) -> None:
+    """Batch version of maybe_generate_ai_tip — mirrors save_predictions."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    tasks = [asyncio.create_task(maybe_generate_ai_tip(p)) for p in preds]
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def get_ai_tips(fixture_ids: list, match_date: str) -> dict:
+    """Bulk-fetch AI tips for a set of fixtures on one date, keyed by
+    fixture_id, for merging into the API response. {} entries (no row yet,
+    still generating, or feature inert) mean the card simply shows no AI
+    Prediction section — never an error."""
+    if not SUPABASE_URL or not SUPABASE_KEY or not fixture_ids:
+        return {}
+
+    def _fetch():
+        return (
+            _get_client()
+            .table("ai_tips")
+            .select("*")
+            .in_("fixture_id", [str(f) for f in fixture_ids])
+            .eq("match_date", match_date)
+            .execute()
+        ).data or []
+
+    try:
+        rows = await asyncio.to_thread(_fetch)
+        return {r["fixture_id"]: r for r in rows if r.get("status") == "done"}
+    except Exception:
+        return {}
+
+
 # ── Basketball save + immediate resolve ────────────────────────────────────────
 
 def _save_basketball_sync(pred: dict) -> None:

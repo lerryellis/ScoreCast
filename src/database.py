@@ -23,6 +23,54 @@ def _get_client():
     return _client
 
 
+def _reset_client() -> None:
+    """Drop the cached client so the next _get_client() call creates a
+    fresh one. See _is_stale_connection_error below for why this exists."""
+    global _client
+    _client = None
+
+
+def _is_stale_connection_error(e: Exception) -> bool:
+    """
+    True if `e` looks like a dead pooled connection rather than a real
+    query/data problem. Verified live (2026-09-11): after a Supabase
+    project restart (done independently of this app, e.g. from the
+    Supabase dashboard to clear an overloaded instance), this module's
+    cached singleton client — created once and reused for the process's
+    whole lifetime — kept handing back connections to a database that no
+    longer existed on the other end. Every call through it failed
+    instantly with "Server disconnected" / "ConnectionTerminated", and
+    since nothing here ever recreated the client, no request recovered
+    on its own; only a full Railway restart (a second manual step the
+    Supabase restart alone didn't fix) cleared it.
+    """
+    msg = str(e)
+    return any(s in msg for s in (
+        "Server disconnected", "ConnectionTerminated", "Connection reset",
+        "RemoteProtocolError", "ConnectionRefusedError",
+    ))
+
+
+async def _with_stale_client_retry(fn):
+    """
+    Run an async no-arg callable; if it fails with what looks like a dead
+    cached-client connection (see _is_stale_connection_error), drop the
+    cached client and retry once with a freshly created one. Every
+    Supabase call in this module goes through _get_client() again on
+    retry (each helper function re-fetches it rather than holding a
+    reference), so resetting the global here is enough to fix every call
+    inside `fn`, not just the first one that failed.
+    """
+    try:
+        return await fn()
+    except Exception as e:
+        if _is_stale_connection_error(e):
+            print(f"[Supabase] stale connection detected ({e}) — recreating client, retrying once")
+            _reset_client()
+            return await fn()
+        raise
+
+
 # ── Save prediction ────────────────────────────────────────────────────────────
 
 def _save_prediction_sync(pred: dict) -> None:
@@ -464,6 +512,16 @@ ELO_UPDATE_CONCURRENCY = 8
 
 async def resolve_predictions() -> int:
     """
+    Thin retry wrapper around _resolve_predictions_once() — see there for
+    the real logic. Exists solely to catch a stale cached Supabase client
+    (see _is_stale_connection_error) and retry once with a fresh one,
+    rather than failing every call until the process itself restarts.
+    """
+    return await _with_stale_client_retry(_resolve_predictions_once)
+
+
+async def _resolve_predictions_once() -> int:
+    """
     Fetch unresolved past predictions, look up actual scores directly from
     ESPN (keyed by each row's own fixture_id + league_slug), and write
     results. Returns the number of predictions resolved.
@@ -490,12 +548,14 @@ async def resolve_predictions() -> int:
 
     from src.fetcher import get_espn_fixture_result
 
-    client  = _get_client()
     today   = date.today().isoformat()
 
-    # Predictions for past dates
+    # Predictions for past dates. Each lambda re-fetches _get_client()
+    # itself (rather than closing over a `client` variable captured once
+    # up front) so that if the retry wrapper above resets the cached
+    # client mid-call, every query here actually picks up the fresh one.
     rows = await asyncio.to_thread(
-        lambda: client.table("predictions")
+        lambda: _get_client().table("predictions")
                       .select("*")
                       .lt("match_date", today)
                       .execute()
@@ -505,7 +565,7 @@ async def resolve_predictions() -> int:
 
     # Which ones already have results?
     done = await asyncio.to_thread(
-        lambda: client.table("prediction_results")
+        lambda: _get_client().table("prediction_results")
                       .select("prediction_id")
                       .execute()
     )

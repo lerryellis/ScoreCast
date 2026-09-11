@@ -51,24 +51,35 @@ def _is_stale_connection_error(e: Exception) -> bool:
     ))
 
 
-async def _with_stale_client_retry(fn):
+async def _with_stale_client_retry(fn, max_attempts: int = 4):
     """
-    Run an async no-arg callable; if it fails with what looks like a dead
-    cached-client connection (see _is_stale_connection_error), drop the
-    cached client and retry once with a freshly created one. Every
-    Supabase call in this module goes through _get_client() again on
-    retry (each helper function re-fetches it rather than holding a
-    reference), so resetting the global here is enough to fix every call
-    inside `fn`, not just the first one that failed.
+    Run an async no-arg callable; if it fails with what looks like a
+    connection-shaped error (see _is_stale_connection_error), drop the
+    cached client and retry with a short backoff. Every Supabase call in
+    this module goes through _get_client() again on retry (each helper
+    function re-fetches it rather than holding a reference), so resetting
+    the global here is enough to fix every call inside `fn`, not just the
+    first one that failed.
+
+    More than one retry on purpose — verified live (2026-09-11) that
+    after a Supabase project restart, failures weren't a single
+    consistently-dead cached client (which one retry would fix) but
+    intermittent resets across several separate attempts in a row (the
+    connection pool was still unstable, not just stale). A single retry
+    left real calls still failing at random.
     """
-    try:
-        return await fn()
-    except Exception as e:
-        if _is_stale_connection_error(e):
-            print(f"[Supabase] stale connection detected ({e}) — recreating client, retrying once")
-            _reset_client()
+    delay = 1.0
+    for attempt in range(max_attempts):
+        try:
             return await fn()
-        raise
+        except Exception as e:
+            if not _is_stale_connection_error(e) or attempt == max_attempts - 1:
+                raise
+            print(f"[Supabase] connection error on attempt {attempt + 1}/{max_attempts} "
+                  f"({e}) — recreating client, retrying in {delay}s")
+            _reset_client()
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 8.0)
 
 
 # ── Save prediction ────────────────────────────────────────────────────────────

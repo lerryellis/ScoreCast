@@ -444,6 +444,24 @@ def _resolve_sync(unresolved: list, results_by_pred_id: dict) -> tuple:
     return count, resolved_matches
 
 
+# Verified live (2026-09-11) that an unbounded backlog turns this into a
+# multi-minute-plus request that starves every other Supabase-touching
+# endpoint on the same process (a single /api/admin/resolve call against an
+# ~80-prediction backlog was still running 10+ minutes later, and
+# /api/predictions/day timed out entirely while it ran) — the old code had
+# no cap on how many predictions one call would take on, fetched ESPN
+# results with unlimited concurrency (inviting the documented ESPN
+# velocity-throttle, see CLAUDE.md's Data Sources section), and ran the
+# post-resolve Elo update for every single match fully sequentially (one
+# DB read + two DB writes each, in a plain for-loop). Fixed by capping the
+# batch (oldest predictions first, so a growing backlog shrinks steadily
+# across repeated calls instead of one call trying to swallow all of it),
+# bounding ESPN fetch concurrency, and parallelizing the Elo updates too.
+RESOLVE_BATCH_LIMIT = 40
+ESPN_FETCH_CONCURRENCY = 8
+ELO_UPDATE_CONCURRENCY = 8
+
+
 async def resolve_predictions() -> int:
     """
     Fetch unresolved past predictions, look up actual scores directly from
@@ -460,6 +478,12 @@ async def resolve_predictions() -> int:
     reason to depend on a second provider here. Fetching per-fixture-id is
     also strictly more precise than football-data.org's fuzzy team-name
     matching ever was.
+
+    Processes at most RESOLVE_BATCH_LIMIT predictions per call (oldest
+    match_date first) — see the module-level comment above for why. A
+    backlog bigger than that just takes another call (or two) to fully
+    clear; the auto-resolve loop and the GitHub Actions cron both call
+    this repeatedly, so steady progress each call is enough.
     """
     if not SUPABASE_URL or not SUPABASE_KEY:
         return 0
@@ -491,11 +515,22 @@ async def resolve_predictions() -> int:
     if not unresolved:
         return 0
 
-    # Fetch each fixture's actual result directly from ESPN by fixture_id.
-    fixture_results = await asyncio.gather(
-        *[get_espn_fixture_result(p["fixture_id"], p.get("league_slug") or "eng.1")
-          for p in unresolved]
-    )
+    total_unresolved = len(unresolved)
+    unresolved.sort(key=lambda p: p.get("match_date") or "")
+    unresolved = unresolved[:RESOLVE_BATCH_LIMIT]
+    print(f"[Resolve] {total_unresolved} unresolved, processing {len(unresolved)} "
+          f"(oldest first){' — backlog will need another call' if total_unresolved > len(unresolved) else ''}")
+
+    # Fetch each fixture's actual result directly from ESPN, bounded
+    # concurrency — unlimited concurrency here is exactly what invites
+    # ESPN's velocity throttle on a backlog this size (see CLAUDE.md).
+    sem = asyncio.Semaphore(ESPN_FETCH_CONCURRENCY)
+
+    async def _fetch(p):
+        async with sem:
+            return await get_espn_fixture_result(p["fixture_id"], p.get("league_slug") or "eng.1")
+
+    fixture_results = await asyncio.gather(*[_fetch(p) for p in unresolved])
     results_by_pred_id = {p["id"]: r for p, r in zip(unresolved, fixture_results) if r}
 
     count, resolved_matches = await asyncio.to_thread(_resolve_sync, unresolved, results_by_pred_id)
@@ -504,27 +539,36 @@ async def resolve_predictions() -> int:
     # _resolve_sync (which is a plain thread-pool function). Best-effort: a
     # failed rating update shouldn't block resolving predictions. Stats/team
     # IDs come from the same ESPN fetch above (get_espn_fixture_result) — no
-    # second API call needed per match.
+    # second API call needed per match. Bounded concurrency, not fully
+    # sequential — each match is 1 read + 2 writes to Supabase, and doing
+    # that one match at a time is what turned a resolve of dozens of
+    # matches into a multi-minute request.
     if resolved_matches:
-        for m in resolved_matches:
-            try:
-                stats = m.get("stats") or {}
-                # Recover team IDs from ESPN when the stored prediction row
-                # predates home_team_id/away_team_id (see _resolve_sync).
-                home_id = m["home_team_id"] or (stats.get("home") or {}).get("team_id")
-                away_id = m["away_team_id"] or (stats.get("away") or {}).get("team_id")
-                if not home_id or not away_id:
-                    continue   # genuinely unrecoverable (ESPN summary unavailable for this fixture)
-                await update_ratings_after_match(
-                    home_id, m["home_team"],
-                    away_id, m["away_team"],
-                    m["league_slug"] or "eng.1",
-                    m["actual_home"], m["actual_away"],
-                    home_stats=stats.get("home"), away_stats=stats.get("away"),
-                )
-            except Exception as e:
-                print(f"[Elo update error] {e}")
+        elo_sem = asyncio.Semaphore(ELO_UPDATE_CONCURRENCY)
 
+        async def _update_elo(m):
+            async with elo_sem:
+                try:
+                    stats = m.get("stats") or {}
+                    # Recover team IDs from ESPN when the stored prediction row
+                    # predates home_team_id/away_team_id (see _resolve_sync).
+                    home_id = m["home_team_id"] or (stats.get("home") or {}).get("team_id")
+                    away_id = m["away_team_id"] or (stats.get("away") or {}).get("team_id")
+                    if not home_id or not away_id:
+                        return   # genuinely unrecoverable (ESPN summary unavailable for this fixture)
+                    await update_ratings_after_match(
+                        home_id, m["home_team"],
+                        away_id, m["away_team"],
+                        m["league_slug"] or "eng.1",
+                        m["actual_home"], m["actual_away"],
+                        home_stats=stats.get("home"), away_stats=stats.get("away"),
+                    )
+                except Exception as e:
+                    print(f"[Elo update error] {e}")
+
+        await asyncio.gather(*[_update_elo(m) for m in resolved_matches])
+
+    print(f"[Resolve] Wrote {count} results, updated Elo for {len(resolved_matches)} matches")
     return count
 
 

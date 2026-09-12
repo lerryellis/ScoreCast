@@ -593,12 +593,18 @@ async def resolve_predictions_endpoint(admin_key: str = Query(...)):
 @app.get("/api/admin/resolve-debug")
 async def resolve_debug_endpoint(admin_key: str = Query(...)):
     """
-    TEMPORARY diagnostic — read-only, no writes. Reports the exact row
-    counts resolve_predictions() sees at each step, since Railway's own
-    logs weren't available while chasing why a live resolve call kept
-    reporting 0 despite a confirmed real backlog (2026-09-12). Safe to
-    remove once that's root-caused; doesn't touch prediction_results or
-    espn_cache.
+    Admin diagnostic — read-only, no writes. Reports the exact row counts
+    resolve_predictions() sees at each step (rows found in the lookback
+    window, already-resolved count, net unresolved, sample rows).
+
+    Originally added as a one-off (2026-09-12) while chasing a live
+    incident where resolve kept reporting 0 despite a confirmed real
+    backlog, with no direct Railway log access to see why — turned out
+    to be an unbounded/unordered query silently missing the backlog (see
+    the "Bound + order" fix in resolve_predictions()). Kept permanently
+    since the underlying failure mode (can't see why resolve found N
+    instead of 0 without shipping a debug build) will recur with any
+    future resolve bug, not just this one.
     """
     from src.config import ADMIN_KEY
     if admin_key != ADMIN_KEY:

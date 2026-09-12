@@ -519,6 +519,7 @@ def _resolve_sync(unresolved: list, results_by_pred_id: dict) -> tuple:
 RESOLVE_BATCH_LIMIT = 40
 ESPN_FETCH_CONCURRENCY = 8
 ELO_UPDATE_CONCURRENCY = 8
+RESOLVE_LOOKBACK_DAYS = 30
 
 
 async def resolve_predictions() -> int:
@@ -560,6 +561,20 @@ async def _resolve_predictions_once() -> int:
     from src.fetcher import get_espn_fixture_result
 
     today   = date.today().isoformat()
+    # Verified live (2026-09-12): an unbounded `.select("*")` here with no
+    # ORDER BY was silently capped by PostgREST's default row limit once
+    # the "predictions" table grew into the thousands (months of daily
+    # predictions across ~20+ leagues) — and with no explicit order, the
+    # arbitrary rows that came back skewed toward old, already-resolved
+    # history, which meant a genuinely recent backlog (this week's, say)
+    # could be entirely absent from `rows.data` and resolve_predictions()
+    # would report "0 resolved" despite real unresolved matches existing.
+    # Scoping to a lookback window + an explicit order makes this
+    # deterministic instead of dependent on whatever PostgREST happens to
+    # return unbounded. Anything older than this window either already
+    # resolved months ago or is permanently unresolvable (fixture pulled
+    # from ESPN) — not worth re-querying on every call forever.
+    cutoff = (date.today() - timedelta(days=RESOLVE_LOOKBACK_DAYS)).isoformat()
 
     # Predictions for past dates. Each lambda re-fetches _get_client()
     # itself (rather than closing over a `client` variable captured once
@@ -568,16 +583,22 @@ async def _resolve_predictions_once() -> int:
     rows = await asyncio.to_thread(
         lambda: _get_client().table("predictions")
                       .select("*")
+                      .gte("match_date", cutoff)
                       .lt("match_date", today)
+                      .order("match_date")
                       .execute()
     )
     if not rows.data:
         return 0
 
-    # Which ones already have results?
+    # Which ones already have results? Same reasoning as above — bound and
+    # order this explicitly rather than trusting an implicit default limit
+    # on a table that only grows.
     done = await asyncio.to_thread(
         lambda: _get_client().table("prediction_results")
                       .select("prediction_id")
+                      .order("resolved_at", desc=True)
+                      .limit(5000)
                       .execute()
     )
     resolved_ids = {r["prediction_id"] for r in (done.data or [])}

@@ -723,6 +723,45 @@ async def set_espn_cache_entry(key: str, value, ttl: int) -> None:
     await asyncio.to_thread(_set_espn_cache_sync, key, value, ttl)
 
 
+def _delete_expired_espn_cache_sync() -> int:
+    client = _get_client()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        result = (
+            client.table("espn_cache")
+                  .delete()
+                  .lt("expires_at", now)
+                  .execute()
+        )
+        return len(result.data or [])
+    except Exception as e:
+        _warn_espn_cache_table_missing_once(e)
+        return 0
+
+
+async def cleanup_expired_espn_cache() -> int:
+    """
+    Delete every espn_cache row past its own expires_at. Returns the
+    number of rows deleted.
+
+    Verified live (2026-09-12): this table only ever grew. get_espn_cache_entry
+    checks expires_at on *read* and treats an expired row as a miss, but
+    nothing ever deleted the row itself — a date-keyed cache entry (e.g.
+    one specific day's fixture list) is never touched again once that
+    date passes, so every such row just sat there dead forever. That
+    silently filled the project's storage quota over time (traced to a
+    full-disk state that made even trivial writes take 90+ minutes,
+    cascading into the whole app's Supabase connections failing). Run
+    daily from the same loop that already does resolve+retrain
+    (api.py's _auto_resolve_loop) — this table is written on nearly
+    every ESPN-backed request, so leaving it unpruned for even a few
+    weeks would refill whatever headroom a one-off manual cleanup buys.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return 0
+    return await asyncio.to_thread(_delete_expired_espn_cache_sync)
+
+
 # ── Team Elo ratings ─────────────────────────────────────────────────────────
 #
 # Attack/defence Elo per team — an independent, cross-season/cross-league

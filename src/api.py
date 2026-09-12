@@ -149,6 +149,15 @@ async def _auto_resolve_loop():
             from src.training import train_all
             metrics = await train_all()
             print(f"[AutoTrain] {metrics}")
+
+            # Prune expired espn_cache rows — verified live (2026-09-12) that
+            # nothing ever deleted these (only checked expiry on read), which
+            # silently filled the project's storage quota over time and
+            # eventually broke every Supabase-touching endpoint. See
+            # database.cleanup_expired_espn_cache's docstring.
+            from src.database import cleanup_expired_espn_cache
+            deleted = await cleanup_expired_espn_cache()
+            print(f"[CacheCleanup] Deleted {deleted} expired espn_cache rows")
         except Exception as e:
             print(f"[AutoResolve error] {e}")
             await asyncio.sleep(3600)
@@ -577,6 +586,24 @@ async def resolve_predictions_endpoint(admin_key: str = Query(...)):
         from src.database import resolve_predictions
         count = await resolve_predictions()
         return {"resolved": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/cleanup-cache")
+async def cleanup_cache_endpoint(admin_key: str = Query(...)):
+    """Manually delete expired espn_cache rows — same cleanup the daily
+    auto-resolve loop now runs, exposed here for an on-demand run (e.g.
+    right after a storage-quota incident, without waiting for 00:05 UTC).
+    See database.cleanup_expired_espn_cache's docstring for why this
+    exists."""
+    from src.config import ADMIN_KEY
+    if admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from src.database import cleanup_expired_espn_cache
+        deleted = await cleanup_expired_espn_cache()
+        return {"deleted": deleted}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

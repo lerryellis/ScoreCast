@@ -590,6 +590,56 @@ async def resolve_predictions_endpoint(admin_key: str = Query(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/admin/resolve-debug")
+async def resolve_debug_endpoint(admin_key: str = Query(...)):
+    """
+    TEMPORARY diagnostic — read-only, no writes. Reports the exact row
+    counts resolve_predictions() sees at each step, since Railway's own
+    logs weren't available while chasing why a live resolve call kept
+    reporting 0 despite a confirmed real backlog (2026-09-12). Safe to
+    remove once that's root-caused; doesn't touch prediction_results or
+    espn_cache.
+    """
+    from src.config import ADMIN_KEY
+    if admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from datetime import timedelta as _timedelta
+        from src.database import _get_client, RESOLVE_LOOKBACK_DAYS
+        today  = date.today().isoformat()
+        cutoff = (date.today() - _timedelta(days=RESOLVE_LOOKBACK_DAYS)).isoformat()
+
+        rows = await asyncio.to_thread(
+            lambda: _get_client().table("predictions")
+                          .select("id, fixture_id, match_date, sport, league_slug")
+                          .gte("match_date", cutoff)
+                          .lt("match_date", today)
+                          .order("match_date")
+                          .execute()
+        )
+        done = await asyncio.to_thread(
+            lambda: _get_client().table("prediction_results")
+                          .select("prediction_id")
+                          .order("resolved_at", desc=True)
+                          .limit(5000)
+                          .execute()
+        )
+        resolved_ids = {r["prediction_id"] for r in (done.data or [])}
+        rows_data = rows.data or []
+        unresolved = [p for p in rows_data if p["id"] not in resolved_ids]
+        return {
+            "today": today,
+            "cutoff": cutoff,
+            "rows_found": len(rows_data),
+            "prediction_results_found": len(done.data or []),
+            "unresolved_count": len(unresolved),
+            "sample_rows": rows_data[:3],
+            "sample_unresolved": unresolved[:3],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/admin/cleanup-cache")
 async def cleanup_cache_endpoint(admin_key: str = Query(...)):
     """Manually delete expired espn_cache rows — same cleanup the daily

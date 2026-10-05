@@ -96,6 +96,13 @@ async def _cache_warm_loop():
                 print(f"[CacheWarm] daily sweep: {len(all_slugs)} slugs checked, "
                       f"{len(todays_slugs)} have fixtures today")
 
+                # Evict expired in-memory cache entries once a day — see
+                # cache.evict_expired's docstring for why this has to be a
+                # periodic sweep rather than relying on access-time cleanup.
+                from src.cache import evict_expired
+                evicted = evict_expired()
+                print(f"[CacheWarm] evicted {evicted} expired in-memory cache entries")
+
             if last_discovery is None or now - last_discovery >= DISCOVERY_INTERVAL:
                 targets = todays_slugs or all_slugs
                 results = await asyncio.gather(

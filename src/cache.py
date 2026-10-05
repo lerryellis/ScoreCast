@@ -40,6 +40,32 @@ _inflight: dict = {}   # key -> asyncio.Task, for request coalescing
 _seen: set = set()     # keys this process has fetched at least once — see cached()
 
 
+def evict_expired() -> int:
+    """
+    Drop every expired entry from the in-memory store. Returns the number
+    of entries removed.
+
+    Verified live (2026-10-05): `_store` had no eviction at all — an entry
+    past its TTL just sat there, correctly ignored by `cached()`'s
+    freshness check, but never actually removed. Every unique cache key
+    this process ever saw (a new one for essentially every day x league x
+    team x endpoint combination — fixtures, standings, team form, H2H all
+    vary by date) stayed in RAM, holding a full ESPN JSON payload, for the
+    rest of the process's uptime. Same bug class as the Supabase
+    `espn_cache` table filling its storage quota (see CLAUDE.md's Data
+    Sources section) — that one filled disk, this one fills RAM. Call
+    periodically (see api.py's `_cache_warm_loop`, once per daily sweep)
+    rather than only evicting opportunistically on access, since a
+    date-keyed entry for a day that's already passed will likely never be
+    read again and so would never get the chance to self-evict on a hit.
+    """
+    now = time.monotonic()
+    expired = [k for k, (expires_at, _) in _store.items() if expires_at <= now]
+    for k in expired:
+        _store.pop(k, None)
+    return len(expired)
+
+
 def is_today(target_date) -> bool:
     """True if target_date (an ISO string or None) is today. None is treated
     as today since that's what every ESPN fetch function defaults to."""

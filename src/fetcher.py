@@ -618,21 +618,29 @@ async def get_espn_head_to_head(home_id: str, away_id: str, league_slug: str, la
 async def get_espn_fixture_dates_for_month(league_slug: str, year: int, month: int) -> list:
     """
     Return a list of ISO date strings (YYYY-MM-DD) that have fixtures
-    for the given league in a given month, using ESPN's scoreboard date-range query.
+    for the given league in a given month, using ESPN's scoreboard
+    month-only date query.
+
+    Verified live (2026-10-05): ESPN's `dates=START-END` range-query
+    format (e.g. `20261001-20261031`) now returns a flat 400
+    `{"code":400,"message":"Failed to get events endpoint."}` for every
+    league and every range tried, including a single week — not a
+    throttle (a single-date query on the same endpoint works fine
+    immediately after), an actual format rejection. This is what fed
+    the calendar's green fixture-day highlight, so every calendar went
+    blank. `dates=YYYYMM` (month only, no explicit day range) still
+    works and returns the exact same full month of events — switched to
+    that instead of reconstructing the day range this function used to
+    build.
 
     Raises on failure (see get_espn_soccer_fixtures for why, now that this
     is cached) — callers fanning out over multiple slugs (MULTI_SLUG_LEAGUES)
     are responsible for tolerating one slug's failure.
     """
-    import calendar as _cal
-    last_day = _cal.monthrange(year, month)[1]
-    start = f"{year}{month:02d}01"
-    end   = f"{year}{month:02d}{last_day:02d}"
-
     async with httpx.AsyncClient() as client:
         r = await client.get(
             f"{ESPN_SOCCER_BASE}/{league_slug}/scoreboard",
-            params={"dates": f"{start}-{end}"},
+            params={"dates": f"{year}{month:02d}"},
             timeout=20,
         )
         r.raise_for_status()
@@ -835,20 +843,21 @@ async def get_espn_nba_scoreboard(date_str: Optional[str] = None) -> list:
 async def get_espn_nba_dates_for_month(year: int, month: int) -> list:
     """
     Return list of ISO date strings (YYYY-MM-DD) that have at least one NBA event
-    in the given month. Uses a single date-range query (fast path), falls back to
+    in the given month. Uses a single month-only query (fast path), falls back to
     day-by-day with a shared client and concurrency limit.
     """
     import calendar as _cal
     last_day = _cal.monthrange(year, month)[1]
-    start = f"{year}{month:02d}01"
-    end   = f"{year}{month:02d}{last_day:02d}"
 
-    # Fast path: single range query (same as football)
+    # Fast path: single month-only query. Verified live (2026-10-05): ESPN's
+    # old `dates=START-END` day-range format now flatly 400s on every range
+    # tried (see get_espn_fixture_dates_for_month's docstring — same break,
+    # same fix) — `dates=YYYYMM` still works and returns the same events.
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 f"{ESPN_NBA_BASE}/scoreboard",
-                params={"dates": f"{start}-{end}"},
+                params={"dates": f"{year}{month:02d}"},
                 timeout=20,
             )
             if r.status_code == 200:

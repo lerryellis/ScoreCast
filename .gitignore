@@ -11,3 +11,7 @@ build/
 .pytest_cache/
 data/cache/*.db
 models/saved/*.pkl
+models/*.pkl
+
+# Claude Code local-machine settings (MCP approvals, etc.) — personal, not shared
+.claude/settings.local.json

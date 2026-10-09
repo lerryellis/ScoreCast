@@ -136,6 +136,56 @@ async def _cache_warm_loop():
         await asyncio.sleep(LIVE_INTERVAL if (live_slugs or nba_live) else DISCOVERY_INTERVAL)
 
 
+async def _predictions_sweep_loop():
+    """
+    Proactively generate + save predictions for every league/competition
+    once a day, instead of relying entirely on a visitor hitting
+    /api/predictions/* to trigger it.
+
+    Verified live (2026-10-09): predictions.created_at showed a ~2.5 day
+    gap with zero new football rows (2026-10-06 18:45 UTC to
+    2026-10-09 00:38 UTC) — not a bug in the generation code itself (it
+    worked fine the moment it was called manually), but an architecture
+    gap: nothing ever called it unless a real visitor's page load did.
+    _cache_warm_loop only keeps raw ESPN fetches warm; it never actually
+    runs the prediction pipeline or triggers save_predictions. On a
+    low-traffic day, a fixture could sit with no prediction ever saved
+    before kickoff — which silently breaks the "locked at first save"
+    accuracy tracking (resolve_predictions() has nothing to resolve
+    against) and leaves the ML/calibration layers with less data to
+    learn from, exactly the "games aren't being tracked" symptom this
+    was reported as.
+
+    Runs once daily at 00:15 UTC — right after _auto_resolve_loop's
+    00:05 UTC resolve+retrain, so each day starts with yesterday
+    resolved and today's predictions already locked in, independent of
+    whether anyone visits the site at all that day.
+    """
+    from datetime import datetime, timezone, timedelta
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            next_run = (now + timedelta(days=1)).replace(
+                hour=0, minute=15, second=0, microsecond=0
+            )
+            await asyncio.sleep((next_run - now).total_seconds())
+
+            football_tasks = [get_all_football_predictions(lg) for lg in ESPN_FOOTBALL_LEAGUES]
+            intl_tasks = [get_all_international_predictions(lg) for lg in ESPN_INTERNATIONAL_LEAGUES]
+            results = await asyncio.gather(
+                *football_tasks, *intl_tasks, get_all_basketball_predictions(),
+                return_exceptions=True,
+            )
+            ok = sum(1 for r in results if not isinstance(r, Exception))
+            total_matches = sum(len(r) for r in results if not isinstance(r, Exception))
+            failed = [str(e) for e in results if isinstance(e, Exception)]
+            print(f"[PredictionsSweep] {ok}/{len(results)} leagues/sports swept, "
+                  f"{total_matches} matches processed"
+                  + (f", {len(failed)} failed: {failed[:3]}" if failed else ""))
+        except Exception as e:
+            print(f"[PredictionsSweep error] {e}")
+
+
 async def _auto_resolve_loop():
     """Resolve yesterday's predictions at 00:05 UTC, then retrain ML models."""
     from datetime import datetime, timezone, timedelta
@@ -174,6 +224,7 @@ async def _auto_resolve_loop():
 async def startup():
     asyncio.create_task(_auto_resolve_loop())
     asyncio.create_task(_cache_warm_loop())
+    asyncio.create_task(_predictions_sweep_loop())
     # Try to load existing models from disk on startup
     from src.models.ml_model import get_football_ml, get_basketball_ml
     get_football_ml()
@@ -649,6 +700,29 @@ async def resolve_debug_endpoint(admin_key: str = Query(...)):
             "sample_rows": rows_data[:3],
             "sample_unresolved": unresolved[:3],
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/sweep-predictions")
+async def sweep_predictions_endpoint(admin_key: str = Query(...)):
+    """Manually trigger the same proactive predictions sweep
+    _predictions_sweep_loop runs daily at 00:15 UTC — for backfilling a
+    gap on demand without waiting for the next scheduled run."""
+    from src.config import ADMIN_KEY
+    if admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        football_tasks = [get_all_football_predictions(lg) for lg in ESPN_FOOTBALL_LEAGUES]
+        intl_tasks = [get_all_international_predictions(lg) for lg in ESPN_INTERNATIONAL_LEAGUES]
+        results = await asyncio.gather(
+            *football_tasks, *intl_tasks, get_all_basketball_predictions(),
+            return_exceptions=True,
+        )
+        ok = sum(1 for r in results if not isinstance(r, Exception))
+        total_matches = sum(len(r) for r in results if not isinstance(r, Exception))
+        failed = [str(e) for e in results if isinstance(e, Exception)]
+        return {"swept": ok, "total": len(results), "matches": total_matches, "failed": failed}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
